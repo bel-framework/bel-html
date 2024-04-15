@@ -1,1 +1,4 @@
-[].
+[{<<"bel_scan">>,
+  {git,"https://github.com/bel-framework/bel-scan",
+       {ref,"1c954733f8687d8d56ee3e88a83fe42ca6bc4a61"}},
+  0}].
