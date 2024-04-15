@@ -1,1 +1,4 @@
-[].
+[{<<"bel_parser">>,
+  {git,"https://github.com/bel-framework/bel-parser",
+       {ref,"fbca754c5963248221f67151edf6937f8c7908bf"}},
+  0}].
