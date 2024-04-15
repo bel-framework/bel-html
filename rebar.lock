@@ -1,4 +1,4 @@
-[{<<"bel_parser">>,
-  {git,"https://github.com/bel-framework/bel-parser",
-       {ref,"fbca754c5963248221f67151edf6937f8c7908bf"}},
+[{<<"bel_scan">>,
+  {git,"https://github.com/bel-framework/bel-scan",
+       {ref,"1c954733f8687d8d56ee3e88a83fe42ca6bc4a61"}},
   0}].

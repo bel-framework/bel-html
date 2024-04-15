@@ -21,32 +21,31 @@
 %%%---------------------------------------------------------------------
 -module(bel_html_5_scan).
 -compile(inline_list_funcs).
-% TODO: Rename bel_parser to bel_scan
--behaviour(bel_parser).
+-behaviour(bel_scan).
 
 % API
 -export([ string/1, string/2 ]).
 
-% bel_parser callbacks
--export([ init/1, handle_parse/3, handle_tokens/2 ]).
+% bel_scan callbacks
+-export([ init/1, handle_char/3, handle_tokens/2 ]).
 
 % Default module callbacks
 -export([ handle_attrs/1 ]).
 
 -callback handle_attrs(binary(), parser()) -> attributes().
 
--import(bel_parser, [ continue/2
-                    , new_ln/1
-                    , incr_col/1
-                    , incr_col/2
-                    , update_pos/1
-                    , pos_text/1
-                    , get_tokens/1
-                    ]).
+-import(bel_scan, [ continue/2
+                  , new_ln/1
+                  , incr_col/1
+                  , incr_col/2
+                  , update_pos/1
+                  , pos_text/1
+                  , get_tokens/1
+                  ]).
 
 -record(state, { handler }).
 
--type parser()     :: bel_parser:t().
+-type parser()     :: bel_scan:t().
 -type attributes() :: [{binary(), binary()}]
                     | #{binary() => binary()}.
 
@@ -62,29 +61,29 @@ string(String) ->
     string(String, #{}).
 
 string(String, Opts) when is_binary(String), is_map(Opts) ->
-    bel_parser:parse(Opts, bel_parser:new(#{
+    bel_scan:string(Opts, bel_scan:new(#{
         input => String,
         handler => ?MODULE
     })).
 
 %%%=====================================================================
-%%% bel_parser callbacks
+%%% bel_scan callbacks
 %%%=====================================================================
 
 init(Opts) ->
     {ok, #state{handler = maps:get(handler, Opts, ?MODULE)}}.
 
-handle_parse($<, <<"!--", Rest/bitstring>>, Parser) ->
+handle_char($<, <<"!--", Rest/bitstring>>, Parser) ->
     Text = pos_text(Parser),
     TxtToken = text_token(Text),
     parse_comment(Rest, update_pos(incr_col(4, push_token(TxtToken, Parser))));
-handle_parse($<, <<$/, Rest/bitstring>>, Parser) ->
+handle_char($<, <<$/, Rest/bitstring>>, Parser) ->
     Text = pos_text(Parser),
     parse_closing_tag(Text, Rest, incr_col(2, Parser));
-handle_parse($<, Rest, Parser) ->
+handle_char($<, Rest, Parser) ->
     Text = pos_text(Parser),
     parse_tag(Text, Rest, incr_col(Parser));
-handle_parse(_Char, Rest, Parser) ->
+handle_char(_Char, Rest, Parser) ->
     continue(Rest, incr_col(Parser)).
 
 handle_tokens(_Tokens, Parser0) ->
@@ -181,7 +180,7 @@ tag_token(open, TagName, Attrs) ->
 %%%=====================================================================
 
 get_state(Parser) ->
-    bel_parser:get_metadata(Parser).
+    bel_scan:get_metadata(Parser).
 
 get_handler(#state{handler = Handler}) ->
     Handler;
@@ -193,10 +192,10 @@ push_token({text, Text} = Token, Parser) ->
         true ->
             Parser;
         false ->
-            bel_parser:push_token(Token, Parser)
+            bel_scan:push_token(Token, Parser)
     end;
 push_token(Token, Parser) ->
-    bel_parser:push_token(Token, Parser).
+    bel_scan:push_token(Token, Parser).
 
 push_tokens(Tokens, Parser) ->
     lists:foldl(fun push_token/2, Parser, Tokens).
