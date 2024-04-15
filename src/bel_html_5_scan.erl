@@ -32,7 +32,7 @@
 % Default module callbacks
 -export([ handle_attrs/1 ]).
 
--callback handle_attrs(binary(), parser()) -> attributes().
+-callback handle_attrs(binary(), scan()) -> attributes().
 
 -import(bel_scan, [ continue/2
                   , new_ln/1
@@ -45,7 +45,7 @@
 
 -record(state, { handler }).
 
--type parser()     :: bel_scan:t().
+-type scan()       :: bel_scan:t().
 -type attributes() :: [{binary(), binary()}]
                     | #{binary() => binary()}.
 
@@ -76,24 +76,24 @@ string(String, Opts) when is_binary(String), is_map(Opts) ->
 init(Opts) ->
     {ok, #state{handler = maps:get(handler, Opts, ?MODULE)}}.
 
-handle_char($<, <<"!--", Rest/bitstring>>, Parser) ->
-    Text = pos_text(Parser),
+handle_char($<, <<"!--", Rest/bitstring>>, Scan) ->
+    Text = pos_text(Scan),
     TxtToken = text_token(Text),
-    parse_comment(Rest, update_pos(incr_col(4, push_token(TxtToken, Parser))));
-handle_char($<, <<$/, Rest/bitstring>>, Parser) ->
-    Text = pos_text(Parser),
-    parse_closing_tag(Text, Rest, incr_col(2, Parser));
-handle_char($<, Rest, Parser) ->
-    Text = pos_text(Parser),
-    parse_tag(Text, Rest, incr_col(Parser));
-handle_char(_Char, Rest, Parser) ->
-    continue(Rest, incr_col(Parser)).
+    parse_comment(Rest, update_pos(incr_col(4, push_token(TxtToken, Scan))));
+handle_char($<, <<$/, Rest/bitstring>>, Scan) ->
+    Text = pos_text(Scan),
+    parse_closing_tag(Text, Rest, incr_col(2, Scan));
+handle_char($<, Rest, Scan) ->
+    Text = pos_text(Scan),
+    parse_tag(Text, Rest, incr_col(Scan));
+handle_char(_Char, Rest, Scan) ->
+    continue(Rest, incr_col(Scan)).
 
-handle_tokens(_Tokens, Parser0) ->
-    Text = pos_text(Parser0),
+handle_tokens(_Tokens, Scan0) ->
+    Text = pos_text(Scan0),
     TxtToken = text_token(Text),
-    Parser = push_token(TxtToken, Parser0),
-    Tokens = get_tokens(Parser),
+    Scan = push_token(TxtToken, Scan0),
+    Tokens = get_tokens(Scan),
     lists:reverse(Tokens).
 
 %%%=====================================================================
@@ -182,109 +182,109 @@ tag_token(open, TagName, Attrs) ->
 %%% Internal functions
 %%%=====================================================================
 
-get_state(Parser) ->
-    bel_scan:get_metadata(Parser).
+get_state(Scan) ->
+    bel_scan:get_metadata(Scan).
 
 get_handler(#state{handler = Handler}) ->
     Handler;
-get_handler(Parser) ->
-    get_handler(get_state(Parser)).
+get_handler(Scan) ->
+    get_handler(get_state(Scan)).
 
-push_token({text, Text} = Token, Parser) ->
+push_token({text, Text} = Token, Scan) ->
     case string:trim(Text) =:= <<>> of
         true ->
-            Parser;
+            Scan;
         false ->
-            bel_scan:push_token(Token, Parser)
+            bel_scan:push_token(Token, Scan)
     end;
-push_token(Token, Parser) ->
-    bel_scan:push_token(Token, Parser).
+push_token(Token, Scan) ->
+    bel_scan:push_token(Token, Scan).
 
-push_tokens(Tokens, Parser) ->
-    lists:foldl(fun push_token/2, Parser, Tokens).
+push_tokens(Tokens, Scan) ->
+    lists:foldl(fun push_token/2, Scan, Tokens).
 
-parse_comment(<<"-->", Rest/bitstring>>, Parser) ->
-    Text = pos_text(Parser),
+parse_comment(<<"-->", Rest/bitstring>>, Scan) ->
+    Text = pos_text(Scan),
     Token = comment_token(Text),
-    continue(Rest, update_pos(incr_col(3, push_token(Token, Parser))));
-parse_comment(<<$\r, $\n, Rest/bitstring>>, Parser) ->
-    parse_comment(Rest, new_ln(Parser));
-parse_comment(<<$\r, Rest/bitstring>>, Parser) ->
-    parse_comment(Rest, new_ln(Parser));
-parse_comment(<<$\n, Rest/bitstring>>, Parser) ->
-    parse_comment(Rest, new_ln(Parser));
-parse_comment(<<_, Rest/bitstring>>, Parser) ->
-    parse_comment(Rest, incr_col(Parser)).
+    continue(Rest, update_pos(incr_col(3, push_token(Token, Scan))));
+parse_comment(<<$\r, $\n, Rest/bitstring>>, Scan) ->
+    parse_comment(Rest, new_ln(Scan));
+parse_comment(<<$\r, Rest/bitstring>>, Scan) ->
+    parse_comment(Rest, new_ln(Scan));
+parse_comment(<<$\n, Rest/bitstring>>, Scan) ->
+    parse_comment(Rest, new_ln(Scan));
+parse_comment(<<_, Rest/bitstring>>, Scan) ->
+    parse_comment(Rest, incr_col(Scan)).
 
-parse_plain_text(TagName, Rest, Parser) ->
+parse_plain_text(TagName, Rest, Scan) ->
     TagSize = byte_size(TagName),
-    continue_plain_text(Rest, TagName, TagSize, update_pos(Parser)).
+    continue_plain_text(Rest, TagName, TagSize, update_pos(Scan)).
 
-continue_plain_text(Rest0, TagName, TagSize, Parser) ->
+continue_plain_text(Rest0, TagName, TagSize, Scan) ->
     case Rest0 of
         <<"</", TagName:TagSize/binary, $>, Rest/bitstring>> ->
-            TxtToken = text_token(pos_text(Parser)),
+            TxtToken = text_token(pos_text(Scan)),
             Token = tag_token(close, TagName),
-            continue(Rest, update_pos(incr_col(2+TagSize+1, push_tokens([TxtToken, Token], Parser))));
+            continue(Rest, update_pos(incr_col(2+TagSize+1, push_tokens([TxtToken, Token], Scan))));
         <<_, Rest/bitstring>> ->
-            continue_plain_text(Rest, TagName, TagSize, incr_col(Parser))
+            continue_plain_text(Rest, TagName, TagSize, incr_col(Scan))
     end.
 
-parse_tag(Text, Rest0, Parser0) ->
-    case parse_tag_name(Rest0, Parser0) of
-        {plain_text_without_attrs, TagName, Rest, Parser} ->
+parse_tag(Text, Rest0, Scan0) ->
+    case parse_tag_name(Rest0, Scan0) of
+        {plain_text_without_attrs, TagName, Rest, Scan} ->
             Token = tag_token(open, TagName, []),
-            parse_plain_text(TagName, Rest, push_token(Token, Parser));
-        {plain_text_with_attrs, TagName, Rest1, Parser1} ->
-            case parse_attrs(Rest1, Parser1) of
-                {opening, Attrs, Rest, Parser} ->
+            parse_plain_text(TagName, Rest, push_token(Token, Scan));
+        {plain_text_with_attrs, TagName, Rest1, Scan1} ->
+            case parse_attrs(Rest1, Scan1) of
+                {opening, Attrs, Rest, Scan} ->
                     Token = tag_token(open, TagName, Attrs),
-                    parse_plain_text(TagName, Rest, push_token(Token, Parser))
+                    parse_plain_text(TagName, Rest, push_token(Token, Scan))
             end;
-        {void, TagName, Rest, Parser} ->
+        {void, TagName, Rest, Scan} ->
             TxtToken = text_token(Text),
             Token = tag_token(void, TagName, []),
-            continue(Rest, update_pos(push_tokens([TxtToken, Token], Parser)));
-        {without_attrs, TagName, Rest, Parser} ->
+            continue(Rest, update_pos(push_tokens([TxtToken, Token], Scan)));
+        {without_attrs, TagName, Rest, Scan} ->
             TxtToken = text_token(Text),
             Token = tag_token(open, TagName, []),
-            continue(Rest, update_pos(push_tokens([TxtToken, Token], Parser)));
-        {with_attrs, TagName, Rest1, Parser1} ->
-            case parse_attrs(Rest1, Parser1) of
-                {void, Attrs, Rest, Parser} ->
+            continue(Rest, update_pos(push_tokens([TxtToken, Token], Scan)));
+        {with_attrs, TagName, Rest1, Scan1} ->
+            case parse_attrs(Rest1, Scan1) of
+                {void, Attrs, Rest, Scan} ->
                     Token = tag_token(void, TagName, Attrs),
-                    continue(Rest, push_token(Token, Parser));
-                {opening, Attrs, Rest, Parser} ->
+                    continue(Rest, push_token(Token, Scan));
+                {opening, Attrs, Rest, Scan} ->
                     Token = tag_token(open, TagName, Attrs),
-                    continue(Rest, push_token(Token, Parser))
+                    continue(Rest, push_token(Token, Scan))
             end
     end.
 
-parse_closing_tag(Text, Rest0, Parser0) ->
-    {_, TagName, Rest, Parser} = parse_tag_name(Rest0, Parser0),
-    case hd(get_tokens(Parser0)) of
+parse_closing_tag(Text, Rest0, Scan0) ->
+    {_, TagName, Rest, Scan} = parse_tag_name(Rest0, Scan0),
+    case hd(get_tokens(Scan0)) of
         {void, _} ->
             TxtToken = text_token(Text),
             Token = tag_token(close, TagName),
-            continue(Rest, update_pos(push_tokens([TxtToken, Token], Parser)));
+            continue(Rest, update_pos(push_tokens([TxtToken, Token], Scan)));
         {open, _} ->
             TxtToken = text_token(Text),
             Token = tag_token(close, TagName),
-            continue(Rest, update_pos(push_tokens([TxtToken, Token], Parser)));
+            continue(Rest, update_pos(push_tokens([TxtToken, Token], Scan)));
         {close, CloseTagName} ->
             case is_plain_text(CloseTagName) of
                 true ->
                     Token = tag_token(close, TagName),
-                    continue(Rest, update_pos(push_token(Token, Parser)));
+                    continue(Rest, update_pos(push_token(Token, Scan)));
                 false ->
                     TxtToken = text_token(Text),
                     Token = tag_token(close, TagName),
-                    continue(Rest, update_pos(push_tokens([Token, TxtToken], Parser)))
+                    continue(Rest, update_pos(push_tokens([Token, TxtToken], Scan)))
             end;
         {text, _} ->
             TxtToken = text_token(Text),
             Token = tag_token(close, TagName),
-            continue(Rest, update_pos(push_tokens([Token, TxtToken], Parser)))
+            continue(Rest, update_pos(push_tokens([Token, TxtToken], Scan)))
     end.
 
 is_plain_text(<<"title">>) ->
@@ -296,14 +296,14 @@ is_plain_text(<<"style">>) ->
 is_plain_text(<<_TagName/bitstring>>) ->
     false.
 
-parse_tag_name(Text, Parser) ->
-    continue_tag_name(Text, update_pos(Parser)).
+parse_tag_name(Text, Scan) ->
+    continue_tag_name(Text, update_pos(Scan)).
 
-continue_tag_name(<<$/, $>, Rest/bitstring>>, Parser) ->
-    TagName = pos_text(Parser),
-    {void, TagName, Rest, update_pos(incr_col(2, Parser))};
-continue_tag_name(<<$>, Rest/bitstring>>, Parser) ->
-    TagName = pos_text(Parser),
+continue_tag_name(<<$/, $>, Rest/bitstring>>, Scan) ->
+    TagName = pos_text(Scan),
+    {void, TagName, Rest, update_pos(incr_col(2, Scan))};
+continue_tag_name(<<$>, Rest/bitstring>>, Scan) ->
+    TagName = pos_text(Scan),
     Kind = case is_void(TagName) of
         true -> void;
         false ->
@@ -314,9 +314,9 @@ continue_tag_name(<<$>, Rest/bitstring>>, Parser) ->
                     without_attrs
             end
     end,
-    {Kind, TagName, Rest, update_pos(incr_col(Parser))};
-continue_tag_name(<<$\s, Rest/bitstring>>, Parser) ->
-    TagName = pos_text(Parser),
+    {Kind, TagName, Rest, update_pos(incr_col(Scan))};
+continue_tag_name(<<$\s, Rest/bitstring>>, Scan) ->
+    TagName = pos_text(Scan),
     Kind =
         case is_plain_text(TagName) of
             true ->
@@ -324,15 +324,15 @@ continue_tag_name(<<$\s, Rest/bitstring>>, Parser) ->
             false ->
                 with_attrs
         end,
-    {Kind, TagName, Rest, update_pos(incr_col(Parser))};
-continue_tag_name(<<$\r, $\n, Rest/bitstring>>, Parser) ->
-    continue_tag_name(Rest, new_ln(Parser));
-continue_tag_name(<<$\r, Rest/bitstring>>, Parser) ->
-    continue_tag_name(Rest, new_ln(Parser));
-continue_tag_name(<<$\n, Rest/bitstring>>, Parser) ->
-    continue_tag_name(Rest, new_ln(Parser));
-continue_tag_name(<<_, Rest/bitstring>>, Parser) ->
-    continue_tag_name(Rest, incr_col(Parser)).
+    {Kind, TagName, Rest, update_pos(incr_col(Scan))};
+continue_tag_name(<<$\r, $\n, Rest/bitstring>>, Scan) ->
+    continue_tag_name(Rest, new_ln(Scan));
+continue_tag_name(<<$\r, Rest/bitstring>>, Scan) ->
+    continue_tag_name(Rest, new_ln(Scan));
+continue_tag_name(<<$\n, Rest/bitstring>>, Scan) ->
+    continue_tag_name(Rest, new_ln(Scan));
+continue_tag_name(<<_, Rest/bitstring>>, Scan) ->
+    continue_tag_name(Rest, incr_col(Scan)).
 
 is_void(<<"area">>) ->
     true;
@@ -365,29 +365,29 @@ is_void(<<"wbr">>) ->
 is_void(<<_TagName/bitstring>>) ->
     false.
 
-parse_attrs(Text, Parser) ->
-    continue_attrs(Text, Parser).
+parse_attrs(Text, Scan) ->
+    continue_attrs(Text, Scan).
 
-continue_attrs(<<$/, $>, Rest/binary>>, Parser) ->
-    Handler = get_handler(Parser),
-    Attrs = Handler:handle_attrs(pos_text(Parser)),
-    {void, Attrs, Rest, update_pos(incr_col(2, Parser))};
-continue_attrs(<<$>, Rest/binary>>, Parser) ->
-    Handler = get_handler(Parser),
-    Attrs = Handler:handle_attrs(pos_text(Parser)),
+continue_attrs(<<$/, $>, Rest/binary>>, Scan) ->
+    Handler = get_handler(Scan),
+    Attrs = Handler:handle_attrs(pos_text(Scan)),
+    {void, Attrs, Rest, update_pos(incr_col(2, Scan))};
+continue_attrs(<<$>, Rest/binary>>, Scan) ->
+    Handler = get_handler(Scan),
+    Attrs = Handler:handle_attrs(pos_text(Scan)),
     Kind = case Attrs =:= [] of
         true -> void;
         false -> opening
     end,
-    {Kind, Attrs, Rest, update_pos(incr_col(Parser))};
-continue_attrs(<<$\r, $\n, Rest/bitstring>>, Parser) ->
-    continue_attrs(Rest, new_ln(Parser));
-continue_attrs(<<$\r, Rest/bitstring>>, Parser) ->
-    continue_attrs(Rest, new_ln(Parser));
-continue_attrs(<<$\n, Rest/bitstring>>, Parser) ->
-    continue_attrs(Rest, new_ln(Parser));
-continue_attrs(<<_, Rest/binary>>, Parser) ->
-    continue_attrs(Rest, incr_col(Parser)).
+    {Kind, Attrs, Rest, update_pos(incr_col(Scan))};
+continue_attrs(<<$\r, $\n, Rest/bitstring>>, Scan) ->
+    continue_attrs(Rest, new_ln(Scan));
+continue_attrs(<<$\r, Rest/bitstring>>, Scan) ->
+    continue_attrs(Rest, new_ln(Scan));
+continue_attrs(<<$\n, Rest/bitstring>>, Scan) ->
+    continue_attrs(Rest, new_ln(Scan));
+continue_attrs(<<_, Rest/binary>>, Scan) ->
+    continue_attrs(Rest, incr_col(Scan)).
 
 %%%=====================================================================
 %%% Test
