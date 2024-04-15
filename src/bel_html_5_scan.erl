@@ -57,6 +57,9 @@
 %%% API
 %%%=====================================================================
 
+% Fixes no local return warning from bel_scan/new/1.
+-dialyzer({nowarn_function, [string/1, string/2]}).
+
 string(String) ->
     string(String, #{}).
 

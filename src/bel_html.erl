@@ -28,6 +28,9 @@
 %%% HTML5
 %%%=====================================================================
 
+% Fixes no local return warning from bel_scan/new/1.
+-dialyzer({nowarn_function, [scan_html5/1]}).
+
 scan_html5(String) ->
     bel_html_5_scan:string(String).
 
