@@ -56,7 +56,7 @@ do_parse([{open, _Anno, {TagName, Attrs}} | T], State, Acc) ->
 do_parse([{close, _Anno, TagName} | T], State, [{TagName, _, _} = Token, {N, A, C} | Acc]) ->
     do_parse(T, State, [{N, A, C ++ [Token]} | Acc]);
 do_parse([{close, _Anno, TagName} | T], State, [{TagName, Attrs, ChildrenNodes} | Acc]) ->
-    do_parse(T, State, [terminate, {TagName, normalize_attrs(Attrs), ChildrenNodes} | Acc]);
+    do_parse(T, State, [terminate, {TagName, Attrs, ChildrenNodes} | Acc]);
 do_parse([{text, _Anno, Text} | T], State, [{N, A, C} | Acc]) ->
     do_parse(T, State, [{N, A, C ++ [Text]} | Acc]);
 do_parse([{text, _Anno, Text} | T], State, [terminate | Acc]) ->
@@ -88,6 +88,12 @@ normalize_attrs(Attrs) ->
 -ifdef(TEST).
 
 parse_test() ->
+    [
+        parse_test_1(),
+        parse_test_2()
+    ].
+
+parse_test_1() ->
     Tokens = [
         {open,{{2,5},undefined,undefined},
             {<<"!DOCTYPE">>,[{<<"html">>,{true,{2,5}}}]}},
@@ -163,5 +169,14 @@ parse_test() ->
             ]}
         ]}
     ], parse(Tokens)).
+
+parse_test_2() ->
+    Html = <<"<div><span id='foo'>bar</span></div>">>,
+    Tokens = bel_html_5_scan:string(Html),
+    ?assertMatch([
+        {<<"div">>,#{},[
+            {<<"span">>,#{<<"id">> := <<"'foo'">>},[<<"bar">>]}
+        ]}
+    ], bel_html_5:parse(Tokens)).
 
 -endif.
