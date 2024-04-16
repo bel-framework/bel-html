@@ -26,7 +26,7 @@ HTML utilities for Erlang.
        <br/>
        <form>
            <div>Foo Form</div>
-           <input id=\"foo\" name='foo' value='\"b\ar\"' />
+           <input id=\"foo\" class=' foo   bar   ' name='foo' value='\"b\ar\"' />
            <input type=\"number\" value=10 />
        </form>
    </body>
@@ -37,7 +37,7 @@ HTML utilities for Erlang.
 [{open,{{2,4},undefined,undefined},
        {<<"!DOCTYPE">>,[{<<"html">>,{true,{2,4}}}]}},
  {open,{{3,4},undefined,undefined},
-       {<<"html">>,[{<<"lang">>,{<<"\"en\"">>,{3,4}}}]}},
+       {<<"html">>,[{<<"lang">>,{<<"en">>,{3,4}}}]}},
  {comment,{{4,4},undefined,undefined},<<" Comment ">>},
  {open,{{5,4},undefined,undefined},{<<"head">>,[]}},
  {open,{{6,8},undefined,undefined},{<<"title">>,[]}},
@@ -45,8 +45,7 @@ HTML utilities for Erlang.
        <<"<b>content inside <title> must be treated as plaintext</b>">>},
  {close,{{6,73},undefined,undefined},<<"title">>},
  {open,{{7,8},undefined,undefined},
-       {<<"script">>,
-        [{<<"src">>,{<<"\"assets/foo.js\"">>,{7,8}}}]}},
+       {<<"script">>,[{<<"src">>,{<<"assets/foo.js">>,{7,8}}}]}},
  {close,{{7,36},undefined,undefined},<<"script">>},
  {open,{{8,8},undefined,undefined},{<<"style">>,[]}},
  {text,{{8,15},undefined,undefined},
@@ -65,12 +64,13 @@ HTML utilities for Erlang.
  {close,{{19,25},undefined,undefined},<<"div">>},
  {void,{{20,12},undefined,undefined},
        {<<"input">>,
-        [{<<"id">>,{<<"\"foo\"">>,{20,12}}},
-         {<<"name">>,{<<"'foo'">>,{20,21}}},
-         {<<"value">>,{<<"'\"bar\"'">>,{20,32}}}]}},
+        [{<<"id">>,{<<"foo">>,{20,12}}},
+         {<<"class">>,{[<<"foo">>,<<"bar">>],{20,21}}},
+         {<<"name">>,{<<"foo">>,{20,43}}},
+         {<<"value">>,{<<"\"bar\"">>,{20,54}}}]}},
  {void,{{21,12},undefined,undefined},
        {<<"input">>,
-        [{<<"type">>,{<<"\"number\"">>,{21,12}}},
+        [{<<"type">>,{<<"number">>,{21,12}}},
          {<<"value">>,{<<"10">>,{21,26}}}]}},
  {close,{{22,8},undefined,undefined},<<"form">>},
  {close,{{23,4},undefined,undefined},<<"body">>},
@@ -80,11 +80,11 @@ HTML utilities for Erlang.
 [{<<"!DOCTYPE">>,
   #{<<"html">> => true},
   [{<<"html">>,
-    #{<<"lang">> => <<"\"en\"">>},
+    #{<<"lang">> => <<"en">>},
     [{<<"head">>,#{},
       [{<<"title">>,#{},
         [<<"<b>content inside <title> must be treated as plaintext</b>">>]},
-       {<<"script">>,#{<<"src">> => <<"\"assets/foo.js\"">>},[]},
+       {<<"script">>,#{<<"src">> => <<"assets/foo.js">>},[]},
        {<<"style">>,#{},
         [<<":root {\n               --foo: 0;\n           }">>]}]},
      {<<"body">>,#{},
@@ -94,11 +94,12 @@ HTML utilities for Erlang.
        {<<"form">>,#{},
         [{<<"div">>,#{},[<<"Foo Form">>]},
          {<<"input">>,
-          #{<<"id">> => <<"\"foo\"">>,<<"name">> => <<"'foo'">>,
-            <<"value">> => <<"'\"bar\"'">>},
+          #{<<"class">> => [<<"foo">>,<<"bar">>],
+            <<"id">> => <<"foo">>,<<"name">> => <<"foo">>,
+            <<"value">> => <<"\"bar\"">>},
           []},
          {<<"input">>,
-          #{<<"type">> => <<"\"number\"">>,<<"value">> => <<"10">>},
+          #{<<"type">> => <<"number">>,<<"value">> => <<"10">>},
           []}]}]}]}]}]
 ```
 

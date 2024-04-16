@@ -129,12 +129,17 @@ do_handle_attrs(Text, Loc0, Acc) ->
         {with_value, KPos, KLen, Rest0, KLoc} ->
             Key = binary_part(Text, KPos, KLen),
             {VPos, VLen, VRest, VLoc} = get_attr_value(Rest0, KLoc),
-            Value = binary_part(Rest0, VPos, VLen),
+            Value = normalize_attr_value(Key, binary_part(Rest0, VPos, VLen)),
             {Rest, Loc} = skip_spaces(VRest, VLoc),
             do_handle_attrs(Rest, Loc, push_attribute(Key, Value, Loc0, Acc));
         none ->
             lists:reverse(Acc)
     end.
+
+normalize_attr_value(<<"class">>, Value) ->
+    binary:split(Value, <<" ">>, [global, trim_all]);
+normalize_attr_value(<<_/bitstring>>, Value) ->
+    Value.
 
 skip_spaces(<<$\r, $\n, Rest/bitstring>>, {Ln, _Col}) ->
     skip_spaces(Rest, {Ln+1, 1});
@@ -560,14 +565,15 @@ scan_test() ->
 handle_attrs_test() ->
     Expect = [
         {<<"id">>,{<<"foo">>,{2,5}}},
-        {<<"name">>,{<<"foo">>,{2,14}}},
-        {<<"value">>,{<<"\"bar\"">>,{2,25}}},
-        {<<"maxlength">>,{<<"10">>,{2,39}}},
+        {<<"class">>,{[<<"foo">>,<<"bar">>,<<"baz">>],{2,14}}},
+        {<<"name">>,{<<"foo">>,{2,40}}},
+        {<<"value">>,{<<"\"bar\"">>,{2,51}}},
+        {<<"maxlength">>,{<<"10">>,{2,65}}},
         {<<"required">>,{true,{3,5}}},
         {<<"disabled">>,{true,{3,14}}}
     ],
     Text = <<"
-    id=\"foo\" name='foo' value='\"b\ar\"' maxlength=10
+    id=\"foo\" class='  foo  bar  baz  ' name='foo' value='\"b\ar\"' maxlength=10
     required disabled disabled
     ">>,
     Expr = handle_attrs(Text, {1, 1}),
