@@ -98,7 +98,7 @@ parse_test_1() ->
         {open,{{2,5},undefined,undefined},
             {<<"!DOCTYPE">>,[{<<"html">>,{true,{2,5}}}]}},
         {open,{{3,5},undefined,undefined},
-            {<<"html">>,[{<<"lang">>,{<<"\"en\"">>,{3,5}}}]}},
+            {<<"html">>,[{<<"lang">>,{<<"en">>,{3,5}}}]}},
         {comment,{{4,5},undefined,undefined},<<" Comment ">>},
         {open,{{5,5},undefined,undefined},{<<"head">>,[]}},
         {open,{{6,9},undefined,undefined},{<<"title">>,[]}},
@@ -107,7 +107,7 @@ parse_test_1() ->
         {close,{{6,74},undefined,undefined},<<"title">>},
         {open,{{7,9},undefined,undefined},
             {<<"script">>,
-            [{<<"src">>,{<<"\"assets/foo.js\"">>,{7,9}}}]}},
+            [{<<"src">>,{<<"assets/foo.js">>,{7,9}}}]}},
         {close,{{7,37},undefined,undefined},<<"script">>},
         {open,{{8,9},undefined,undefined},{<<"style">>,[]}},
         {text,{{8,16},undefined,undefined},
@@ -126,12 +126,12 @@ parse_test_1() ->
         {close,{{19,26},undefined,undefined},<<"div">>},
         {void,{{20,13},undefined,undefined},
             {<<"input">>,
-            [{<<"id">>,{<<"\"foo\"">>,{20,13}}},
-            {<<"name">>,{<<"'foo'">>,{20,22}}},
-            {<<"value">>,{<<"'\"bar\"'">>,{20,33}}}]}},
+            [{<<"id">>,{<<"foo">>,{20,13}}},
+            {<<"name">>,{<<"foo">>,{20,22}}},
+            {<<"value">>,{<<"\"bar\"">>,{20,33}}}]}},
         {void,{{21,13},undefined,undefined},
             {<<"input">>,
-            [{<<"type">>,{<<"\"number\"">>,{21,13}}},
+            [{<<"type">>,{<<"number">>,{21,13}}},
             {<<"value">>,{<<"10">>,{21,27}}}]}},
         {close,{{22,9},undefined,undefined},<<"form">>},
         {close,{{23,5},undefined,undefined},<<"body">>},
@@ -139,12 +139,12 @@ parse_test_1() ->
     ],
     ?assertMatch([
         {<<"!DOCTYPE">>,#{<<"html">> := true},[
-            {<<"html">>,#{<<"lang">> := <<"\"en\"">>},[
+            {<<"html">>,#{<<"lang">> := <<"en">>},[
                 {<<"head">>,#{},[
                     {<<"title">>,#{},[
                         <<"<b>content inside <title> must be treated as plaintext</b>">>
                     ]},
-                    {<<"script">>,#{<<"src">> := <<"\"assets/foo.js\"">>},[]},
+                    {<<"script">>,#{<<"src">> := <<"assets/foo.js">>},[]},
                     {<<"style">>,#{},[
                         <<":root {\n                --foo: 0;\n            }">>
                     ]}
@@ -156,12 +156,12 @@ parse_test_1() ->
                     {<<"form">>,#{},[
                         {<<"div">>,#{},[<<"Foo Form">>]},
                         {<<"input">>,#{
-                            <<"id">> := <<"\"foo\"">>,
-                            <<"name">> := <<"'foo'">>,
-                            <<"value">> := <<"'\"bar\"'">>
+                            <<"id">> := <<"foo">>,
+                            <<"name">> := <<"foo">>,
+                            <<"value">> := <<"\"bar\"">>
                         },[]},
                         {<<"input">>,#{
-                            <<"type">> := <<"\"number\"">>,
+                            <<"type">> := <<"number">>,
                             <<"value">> := <<"10">>
                         },[]}
                     ]}
@@ -175,7 +175,7 @@ parse_test_2() ->
     Tokens = bel_html_5_scan:string(Html),
     ?assertMatch([
         {<<"div">>,#{},[
-            {<<"span">>,#{<<"id">> := <<"'foo'">>},[<<"bar">>]}
+            {<<"span">>,#{<<"id">> := <<"foo">>},[<<"bar">>]}
         ]}
     ], bel_html_5:parse(Tokens)).
 

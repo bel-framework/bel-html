@@ -200,16 +200,16 @@ do_get_attr_key_1(<<>>, Pos, Len, Loc) ->
     {without_value, Pos, Len, <<>>, Loc}.
 
 get_attr_value(<<$", Rest/bitstring>>, {Ln, Col}) ->
-    get_str_value(Rest, 0, 1, $", {Ln, Col+1});
+    get_str_value(Rest, 1, 0, $", {Ln, Col+1});
 get_attr_value(<<$', Rest/bitstring>>, {Ln, Col}) ->
-    get_str_value(Rest, 0, 1, $', {Ln, Col+1});
+    get_str_value(Rest, 1, 0, $', {Ln, Col+1});
 get_attr_value(<<Rest/bitstring>>, Loc)->
     get_number_value(Rest, 0, 0, Loc).
 
 get_str_value(<<$\\, Q, Rest/bitstring>>, Pos, Len, Q, {Ln, Col}) ->
     get_str_value(Rest, Pos, Len+2, Q, {Ln, Col+2});
 get_str_value(<<Q, Rest/bitstring>>, Pos, Len, Q, {Ln, Col}) ->
-    {Pos, Len+1, Rest, {Ln, Col+1}};
+    {Pos, Len, Rest, {Ln, Col+1}};
 get_str_value(<<_, Rest/bitstring>>, Pos, Len, Q, {Ln, Col}) ->
     get_str_value(Rest, Pos, Len+1, Q, {Ln, Col+1}).
 
@@ -485,12 +485,12 @@ continue_attrs(<<Rest0/bitstring>>, Scan0) ->
 
 -ifdef(TEST).
 
-parse_test() ->
+scan_test() ->
     Expect = [
         {open,{{2,5},undefined,undefined},
             {<<"!DOCTYPE">>,[{<<"html">>,{true,{2,5}}}]}},
         {open,{{3,5},undefined,undefined},
-            {<<"html">>,[{<<"lang">>,{<<"\"en\"">>,{3,5}}}]}},
+            {<<"html">>,[{<<"lang">>,{<<"en">>,{3,5}}}]}},
         {comment,{{4,5},undefined,undefined},<<" Comment ">>},
         {open,{{5,5},undefined,undefined},{<<"head">>,[]}},
         {open,{{6,9},undefined,undefined},{<<"title">>,[]}},
@@ -499,7 +499,7 @@ parse_test() ->
         {close,{{6,74},undefined,undefined},<<"title">>},
         {open,{{7,9},undefined,undefined},
             {<<"script">>,
-            [{<<"src">>,{<<"\"assets/foo.js\"">>,{7,9}}}]}},
+            [{<<"src">>,{<<"assets/foo.js">>,{7,9}}}]}},
         {close,{{7,37},undefined,undefined},<<"script">>},
         {open,{{8,9},undefined,undefined},{<<"style">>,[]}},
         {text,{{8,16},undefined,undefined},
@@ -518,12 +518,12 @@ parse_test() ->
         {close,{{19,26},undefined,undefined},<<"div">>},
         {void,{{20,13},undefined,undefined},
             {<<"input">>,
-            [{<<"id">>,{<<"\"foo\"">>,{20,13}}},
-            {<<"name">>,{<<"'foo'">>,{20,22}}},
-            {<<"value">>,{<<"'\"bar\"'">>,{20,33}}}]}},
+            [{<<"id">>,{<<"foo">>,{20,13}}},
+            {<<"name">>,{<<"foo">>,{20,22}}},
+            {<<"value">>,{<<"\"bar\"">>,{20,33}}}]}},
         {void,{{21,13},undefined,undefined},
             {<<"input">>,
-            [{<<"type">>,{<<"\"number\"">>,{21,13}}},
+            [{<<"type">>,{<<"number">>,{21,13}}},
             {<<"value">>,{<<"10">>,{21,27}}}]}},
         {close,{{22,9},undefined,undefined},<<"form">>},
         {close,{{23,5},undefined,undefined},<<"body">>},
@@ -559,9 +559,9 @@ parse_test() ->
 
 handle_attrs_test() ->
     Expect = [
-        {<<"id">>,{<<"\"foo\"">>,{2,5}}},
-        {<<"name">>,{<<"'foo'">>,{2,14}}},
-        {<<"value">>,{<<"'\"bar\"'">>,{2,25}}},
+        {<<"id">>,{<<"foo">>,{2,5}}},
+        {<<"name">>,{<<"foo">>,{2,14}}},
+        {<<"value">>,{<<"\"bar\"">>,{2,25}}},
         {<<"maxlength">>,{<<"10">>,{2,39}}},
         {<<"required">>,{true,{3,5}}},
         {<<"disabled">>,{true,{3,14}}}
