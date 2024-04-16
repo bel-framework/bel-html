@@ -30,28 +30,38 @@
 -export([ init/1, handle_char/3, handle_tokens/2 ]).
 
 % Default module callbacks
--export([ handle_attrs/1 ]).
+-export([ handle_attrs/2 ]).
 
--callback handle_attrs(binary(), parser()) -> attributes().
+-callback handle_attrs(binary(), location()) -> [attribute()].
 
 -import(bel_scan, [ continue/2
+                  , fold/2
+                  , snapshot/1
                   , new_ln/1
+                  , skip_new_lns/2
                   , incr_col/1
                   , incr_col/2
                   , update_pos/1
                   , pos_text/1
                   , get_tokens/1
+                  , anno/1
+                  , get_snap_loc/1
                   ]).
 
--record(state, { handler }).
+% Libs
 
--type parser()     :: bel_scan:t().
--type attributes() :: [{binary(), binary()}]
-                    | #{binary() => binary()}.
+-include_lib("kernel/include/logger.hrl").
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
+
+% Types
+
+-record(state, { handler }).
+
+-type location()  :: bel_scan:location().
+-type attribute() :: {Key :: binary(), {Value :: binary(), location()}}.
 
 %%%=====================================================================
 %%% API
@@ -76,215 +86,290 @@ string(String, Opts) when is_binary(String), is_map(Opts) ->
 init(Opts) ->
     {ok, #state{handler = maps:get(handler, Opts, ?MODULE)}}.
 
-handle_char($<, <<"!--", Rest/bitstring>>, Parser) ->
-    Text = pos_text(Parser),
-    TxtToken = text_token(Text),
-    parse_comment(Rest, update_pos(incr_col(4, push_token(TxtToken, Parser))));
-handle_char($<, <<$/, Rest/bitstring>>, Parser) ->
-    Text = pos_text(Parser),
-    parse_closing_tag(Text, Rest, incr_col(2, Parser));
-handle_char($<, Rest, Parser) ->
-    Text = pos_text(Parser),
-    parse_tag(Text, Rest, incr_col(Parser));
-handle_char(_Char, Rest, Parser) ->
-    continue(Rest, incr_col(Parser)).
+handle_char($<, <<"!--", Rest/bitstring>>, Scan) ->
+    parse_comment(Rest, fold(Scan, [
+        fun(S) -> push_token(text_token(S), S) end,
+        fun(S) -> snapshot(S) end,
+        fun(S) -> incr_col(4, S) end,
+        fun(S) -> update_pos(S) end
+    ]));
+handle_char($<, <<$/, Rest/bitstring>>, Scan) ->
+    TxtToken = text_token(Scan),
+    parse_closing_tag(TxtToken, Rest, incr_col(2, snapshot(Scan)));
+handle_char($<, <<Rest/bitstring>>, Scan) ->
+    TxtToken = text_token(Scan),
+    parse_tag(TxtToken, Rest, incr_col(snapshot(Scan)));
+handle_char(_Char, <<>>, Scan) ->
+    continue(<<>>, fold(Scan, [
+        fun(S) -> incr_col(S) end,
+        fun(S) -> push_token(text_token(S), S) end
+    ]));
+handle_char(_Char, <<Rest/bitstring>>, Scan) ->
+    continue(Rest, incr_col(Scan)).
 
-handle_tokens(_Tokens, Parser0) ->
-    Text = pos_text(Parser0),
-    TxtToken = text_token(Text),
-    Parser = push_token(TxtToken, Parser0),
-    Tokens = get_tokens(Parser),
+handle_tokens(Tokens, _Scan) ->
     lists:reverse(Tokens).
 
 %%%=====================================================================
 %%% Default callbacks
 %%%=====================================================================
 
-handle_attrs(Text) ->
-    do_handle_attrs(Text, []).
+handle_attrs(Text0, InitialLoc) when is_binary(Text0) ->
+    {Text, Loc} = skip_spaces(Text0, InitialLoc),
+    do_handle_attrs(Text, Loc, []).
 
-do_handle_attrs(<<>>, Acc) ->
+do_handle_attrs(<<>>, _Loc, Acc) ->
     lists:reverse(Acc);
-do_handle_attrs(Text, Acc) ->
-    case get_attr_key(Text) of
-        {without_value, Pos, Len, Rest} ->
+do_handle_attrs(Text, Loc0, Acc) ->
+    case get_attr_key(Text, Loc0) of
+        {without_value, Pos, Len, KRest, KLoc} ->
             Key = binary_part(Text, Pos, Len),
-            do_handle_attrs(Rest, [Key | Acc]);
-        {with_value, KPos, KLen, Rest0} ->
+            {Rest, Loc} = skip_spaces(KRest, KLoc),
+            do_handle_attrs(Rest, Loc, push_attribute(Key, true, Loc0, Acc));
+        {with_value, KPos, KLen, Rest0, KLoc} ->
             Key = binary_part(Text, KPos, KLen),
-            {VPos, VLen, Rest} = get_attr_value(Rest0),
+            {VPos, VLen, VRest, VLoc} = get_attr_value(Rest0, KLoc),
             Value = binary_part(Rest0, VPos, VLen),
-            do_handle_attrs(Rest, [{Key, Value} | Acc]);
+            {Rest, Loc} = skip_spaces(VRest, VLoc),
+            do_handle_attrs(Rest, Loc, push_attribute(Key, Value, Loc0, Acc));
         none ->
             lists:reverse(Acc)
     end.
 
-get_attr_key(Text) ->
-    get_attr_key(Text, 0).
+skip_spaces(<<$\r, $\n, Rest/bitstring>>, {Ln, _Col}) ->
+    skip_spaces(Rest, {Ln+1, 1});
+skip_spaces(<<$\r, Rest/bitstring>>, {Ln, _Col}) ->
+    skip_spaces(Rest, {Ln+1, 1});
+skip_spaces(<<$\n, Rest/bitstring>>, {Ln, _Col}) ->
+    skip_spaces(Rest, {Ln+1, 1});
+skip_spaces(<<$\f, Rest/bitstring>>, {Ln, _Col}) ->
+    skip_spaces(Rest, {Ln+1, 1});
+skip_spaces(<<$\s, Rest/bitstring>>, {Ln, Col}) ->
+    skip_spaces(Rest, {Ln, Col+1});
+skip_spaces(Rest, Loc) ->
+    {Rest, Loc}.
 
-get_attr_key(<<$\r, $\n, Rest/binary>>, Pos) ->
-    get_attr_key(Rest, Pos+1);
-get_attr_key(<<$\r, Rest/binary>>, Pos) ->
-    get_attr_key(Rest, Pos+1);
-get_attr_key(<<$\n, Rest/binary>>, Pos) ->
-    get_attr_key(Rest, Pos+1);
-get_attr_key(<<$\s, Rest/binary>>, Pos) ->
-    get_attr_key(Rest, Pos+1);
-get_attr_key(<<Rest/binary>>, Pos) ->
-    do_get_attr_key(Rest, Pos, 0);
-get_attr_key(<<>>, _Pos) ->
+push_attribute(K, V, L, Attrs) ->
+    case attribute_defined(K, Attrs) of
+        true ->
+            ?LOG_WARNING(#{
+                message => <<"Attribute ", K/binary, " already defined. Skipping.">>,
+                reason => attribute_defined
+            }),
+            Attrs;
+        false ->
+            [{K, {V, L}} | Attrs]
+    end.
+
+attribute_defined(Key, Attrs) ->
+    lists:keymember(Key, 1, Attrs).
+
+get_attr_key(Text, Loc) ->
+    do_get_attr_key(Text, 0, Loc).
+
+do_get_attr_key(<<$\r, $\n, Rest/bitstring>>, Pos, {Ln, _Col}) ->
+    do_get_attr_key(Rest, Pos+2, {Ln+1, 1});
+do_get_attr_key(<<$\r, Rest/bitstring>>, Pos, {Ln, _Col}) ->
+    do_get_attr_key(Rest, Pos+1, {Ln+1, 1});
+do_get_attr_key(<<$\n, Rest/bitstring>>, Pos, {Ln, _Col}) ->
+    do_get_attr_key(Rest, Pos+1, {Ln+1, 1});
+do_get_attr_key(<<$\f, Rest/bitstring>>, Pos, {Ln, _Col}) ->
+    do_get_attr_key(Rest, Pos+1, {Ln+1, 1});
+do_get_attr_key(<<$\s, Rest/bitstring>>, Pos, {Ln, Col}) ->
+    do_get_attr_key(Rest, Pos+1, {Ln, Col+1});
+do_get_attr_key(<<Rest/bitstring>>, Pos, Loc) ->
+    do_get_attr_key_1(Rest, Pos, 0, Loc);
+do_get_attr_key(<<>>, _Pos, _Loc) ->
     none.
 
-do_get_attr_key(<<$\r, $\n, Rest/binary>>, Pos, Len) ->
-    {without_value, Pos, Len, Rest};
-do_get_attr_key(<<$\r, Rest/binary>>, Pos, Len) ->
-    {without_value, Pos, Len, Rest};
-do_get_attr_key(<<$\n, Rest/binary>>, Pos, Len) ->
-    {without_value, Pos, Len, Rest};
-do_get_attr_key(<<$\s, Rest/binary>>, Pos, Len) ->
-    {without_value, Pos, Len, Rest};
-do_get_attr_key(<<$=, Rest/binary>>, Pos, Len) ->
-    {with_value, Pos, Len, Rest};
-do_get_attr_key(<<_, Rest/binary>>, Pos, Len) ->
-    do_get_attr_key(Rest, Pos, Len+1);
-do_get_attr_key(<<>>, Pos, Len) ->
-    {without_value, Pos, Len, <<>>}.
+do_get_attr_key_1(<<$\r, $\n, Rest/bitstring>>, Pos, Len, {Ln, _Col}) ->
+    {without_value, Pos, Len, Rest, {Ln+1, 1}};
+do_get_attr_key_1(<<$\r, Rest/bitstring>>, Pos, Len, {Ln, _Col}) ->
+    {without_value, Pos, Len, Rest, {Ln+1, 1}};
+do_get_attr_key_1(<<$\n, Rest/bitstring>>, Pos, Len, {Ln, _Col}) ->
+    {without_value, Pos, Len, Rest, {Ln+1, 1}};
+do_get_attr_key_1(<<$\f, Rest/bitstring>>, Pos, Len, {Ln, _Col}) ->
+    {without_value, Pos, Len, Rest, {Ln+1, 1}};
+do_get_attr_key_1(<<$\s, Rest/bitstring>>, Pos, Len, {Ln, Col}) ->
+    {without_value, Pos, Len, Rest, {Ln, Col+1}};
+do_get_attr_key_1(<<$=, Rest/bitstring>>, Pos, Len, {Ln, Col}) ->
+    {with_value, Pos, Len, Rest, {Ln, Col+1}};
+do_get_attr_key_1(<<_, Rest/bitstring>>, Pos, Len, {Ln, Col}) ->
+    do_get_attr_key_1(Rest, Pos, Len+1, {Ln, Col+1});
+do_get_attr_key_1(<<>>, Pos, Len, Loc) ->
+    {without_value, Pos, Len, <<>>, Loc}.
 
-get_attr_value(<<$", Rest/binary>>) ->
-    do_get_attr_value(Rest, 0, 1, $");
-get_attr_value(<<$', Rest/binary>>) ->
-    do_get_attr_value(Rest, 0, 1, $');
-get_attr_value(<<Rest/binary>>) ->
-    do_get_attr_value(Rest, 0, -1, $\s).
+get_attr_value(<<$", Rest/bitstring>>, {Ln, Col}) ->
+    get_str_value(Rest, 0, 1, $", {Ln, Col+1});
+get_attr_value(<<$', Rest/bitstring>>, {Ln, Col}) ->
+    get_str_value(Rest, 0, 1, $', {Ln, Col+1});
+get_attr_value(<<Rest/bitstring>>, Loc)->
+    get_number_value(Rest, 0, 0, Loc).
 
-do_get_attr_value(<<$\\, _, Rest/binary>>, Pos, Len, Q) ->
-    do_get_attr_value(Rest, Pos, Len+2, Q);
-do_get_attr_value(<<Q, Rest/binary>>, Pos, Len, Q) ->
-    {Pos, Len+1, Rest};
-do_get_attr_value(<<_, Rest/binary>>, Pos, Len, Q) ->
-    do_get_attr_value(Rest, Pos, Len+1, Q).
+get_str_value(<<$\\, Q, Rest/bitstring>>, Pos, Len, Q, {Ln, Col}) ->
+    get_str_value(Rest, Pos, Len+2, Q, {Ln, Col+2});
+get_str_value(<<Q, Rest/bitstring>>, Pos, Len, Q, {Ln, Col}) ->
+    {Pos, Len+1, Rest, {Ln, Col+1}};
+get_str_value(<<_, Rest/bitstring>>, Pos, Len, Q, {Ln, Col}) ->
+    get_str_value(Rest, Pos, Len+1, Q, {Ln, Col+1}).
 
-comment_token(Comment) ->
-    {comment, Comment}.
+get_number_value(<<$\r, $\n, Rest/bitstring>>, Pos, Len, {Ln, _Col}) ->
+    {Pos, Len, Rest, {Ln+1, 1}};
+get_number_value(<<$\r, Rest/bitstring>>, Pos, Len, {Ln, _Col}) ->
+    {Pos, Len, Rest, {Ln+1, 1}};
+get_number_value(<<$\n, Rest/bitstring>>, Pos, Len, {Ln, _Col}) ->
+    {Pos, Len, Rest, {Ln+1, 1}};
+get_number_value(<<$\f, Rest/bitstring>>, Pos, Len, {Ln, _Col}) ->
+    {Pos, Len, Rest, {Ln+1, 1}};
+get_number_value(<<$\s, Rest/bitstring>>, Pos, Len, {Ln, Col}) ->
+    {Pos, Len, Rest, {Ln, Col+1}};
+get_number_value(<<$/, Rest/bitstring>>, Pos, Len, {Ln, Col}) ->
+    {Pos, Len, Rest, {Ln, Col+1}};
+get_number_value(<<$>, Rest/bitstring>>, Pos, Len, {Ln, Col}) ->
+    {Pos, Len, Rest, {Ln, Col+1}};
+get_number_value(<<_, Rest/bitstring>>, Pos, Len, {Ln, Col}) ->
+    get_number_value(Rest, Pos, Len+1, {Ln, Col+1});
+get_number_value(<<>>, Pos, Len, Loc) ->
+    {Pos, Len, <<>>, Loc}.
 
-text_token(Text) ->
-    {text, Text}.
+comment_token(Scan) ->
+    token(comment, pos_text(Scan), Scan).
 
-tag_token(close, TagName) ->
-    {close, TagName}.
+text_token(Scan) ->
+    token(text, pos_text(Scan), Scan).
 
-tag_token(void, TagName, Attrs) ->
-    {void, {TagName, Attrs}};
-tag_token(open, TagName, Attrs) ->
-    {open, {TagName, Attrs}}.
+close_token(TagName, Scan) ->
+    token(close, TagName, Scan).
+
+void_token(TagName, Attrs, Scan) ->
+    token(void, {TagName, Attrs}, Scan).
+
+open_token(TagName, Attrs, Scan) ->
+    token(open, {TagName, Attrs}, Scan).
+
+token(Tag, Metadata, Scan) ->
+    bel_scan:token(Tag, bel_scan:anno(Scan), Metadata).
 
 %%%=====================================================================
 %%% Internal functions
 %%%=====================================================================
 
-get_state(Parser) ->
-    bel_scan:get_metadata(Parser).
+get_state(Scan) ->
+    bel_scan:get_handler_state(Scan).
 
 get_handler(#state{handler = Handler}) ->
     Handler;
-get_handler(Parser) ->
-    get_handler(get_state(Parser)).
+get_handler(Scan) ->
+    get_handler(get_state(Scan)).
 
-push_token({text, Text} = Token, Parser) ->
-    case string:trim(Text) =:= <<>> of
-        true ->
-            Parser;
-        false ->
-            bel_scan:push_token(Token, Parser)
+% TODO: Make trim optional.
+%       Maybe have an option to trim and another to skip empty texts.
+push_token({text, Anno, Text0}, Scan) ->
+    case string:trim(Text0) of
+        <<>> ->
+            Scan;
+        Text ->
+            bel_scan:push_token({text, Anno, Text}, Scan)
     end;
-push_token(Token, Parser) ->
-    bel_scan:push_token(Token, Parser).
+push_token(Token, Scan) ->
+    bel_scan:push_token(Token, Scan).
 
-push_tokens(Tokens, Parser) ->
-    lists:foldl(fun push_token/2, Parser, Tokens).
+push_tokens(Tokens, Scan) ->
+    lists:foldl(fun push_token/2, Scan, Tokens).
 
-parse_comment(<<"-->", Rest/bitstring>>, Parser) ->
-    Text = pos_text(Parser),
-    Token = comment_token(Text),
-    continue(Rest, update_pos(incr_col(3, push_token(Token, Parser))));
-parse_comment(<<$\r, $\n, Rest/bitstring>>, Parser) ->
-    parse_comment(Rest, new_ln(Parser));
-parse_comment(<<$\r, Rest/bitstring>>, Parser) ->
-    parse_comment(Rest, new_ln(Parser));
-parse_comment(<<$\n, Rest/bitstring>>, Parser) ->
-    parse_comment(Rest, new_ln(Parser));
-parse_comment(<<_, Rest/bitstring>>, Parser) ->
-    parse_comment(Rest, incr_col(Parser)).
+parse_comment(<<"-->", Rest/bitstring>>, Scan) ->
+    continue(Rest, fold(Scan, [
+        fun(S) -> push_token(comment_token(S), S) end,
+        fun(S) -> incr_col(3, S) end,
+        fun(S) -> update_pos(S) end,
+        fun(S) -> snapshot(S) end
+    ]));
+parse_comment(<<Rest0/bitstring>>, Scan0) ->
+    {ok, {_Char, Rest, Scan}} = skip_new_lns(Rest0, Scan0),
+    parse_comment(Rest, incr_col(Scan)).
 
-parse_plain_text(TagName, Rest, Parser) ->
+parse_plain_text(TagName, Rest, Scan) ->
     TagSize = byte_size(TagName),
-    continue_plain_text(Rest, TagName, TagSize, update_pos(Parser)).
+    continue_plain_text(Rest, TagName, TagSize, snapshot(update_pos(Scan))).
 
-continue_plain_text(Rest0, TagName, TagSize, Parser) ->
+continue_plain_text(Rest0, TagName, TagSize, Scan0) ->
     case Rest0 of
         <<"</", TagName:TagSize/binary, $>, Rest/bitstring>> ->
-            TxtToken = text_token(pos_text(Parser)),
-            Token = tag_token(close, TagName),
-            continue(Rest, update_pos(incr_col(2+TagSize+1, push_tokens([TxtToken, Token], Parser))));
-        <<_, Rest/bitstring>> ->
-            continue_plain_text(Rest, TagName, TagSize, incr_col(Parser))
+            continue(Rest, fold(Scan0, [
+                fun(S) -> update_pos(S) end,
+                fun(S) -> snapshot(S) end,
+                fun(S) -> push_tokens([text_token(Scan0), close_token(TagName, S)], S) end,
+                fun(S) -> incr_col(2 + TagSize + 1, S) end,
+                fun(S) -> update_pos(S) end,
+                fun(S) -> snapshot(S) end
+            ]));
+        <<Rest0/bitstring>> ->
+            {ok, {_Char, Rest, Scan}} = skip_new_lns(Rest0, Scan0),
+            continue_plain_text(Rest, TagName, TagSize, incr_col(Scan))
     end.
 
-parse_tag(Text, Rest0, Parser0) ->
-    case parse_tag_name(Rest0, Parser0) of
-        {plain_text_without_attrs, TagName, Rest, Parser} ->
-            Token = tag_token(open, TagName, []),
-            parse_plain_text(TagName, Rest, push_token(Token, Parser));
-        {plain_text_with_attrs, TagName, Rest1, Parser1} ->
-            case parse_attrs(Rest1, Parser1) of
-                {opening, Attrs, Rest, Parser} ->
-                    Token = tag_token(open, TagName, Attrs),
-                    parse_plain_text(TagName, Rest, push_token(Token, Parser))
+parse_tag(TxtToken, Rest0, Scan0) ->
+    case parse_tag_name(Rest0, Scan0) of
+        {plain_text_without_attrs, TagName, Rest, Scan} ->
+            Token = open_token(TagName, [], Scan),
+            parse_plain_text(TagName, Rest, push_token(Token, Scan));
+        {plain_text_with_attrs, TagName, Rest1, Scan1} ->
+            case parse_attrs(Rest1, Scan1) of
+                {opening, Attrs, Rest, Scan} ->
+                    Token = open_token(TagName, Attrs, Scan),
+                    parse_plain_text(TagName, Rest, push_token(Token, Scan))
             end;
-        {void, TagName, Rest, Parser} ->
-            TxtToken = text_token(Text),
-            Token = tag_token(void, TagName, []),
-            continue(Rest, update_pos(push_tokens([TxtToken, Token], Parser)));
-        {without_attrs, TagName, Rest, Parser} ->
-            TxtToken = text_token(Text),
-            Token = tag_token(open, TagName, []),
-            continue(Rest, update_pos(push_tokens([TxtToken, Token], Parser)));
-        {with_attrs, TagName, Rest1, Parser1} ->
-            case parse_attrs(Rest1, Parser1) of
-                {void, Attrs, Rest, Parser} ->
-                    Token = tag_token(void, TagName, Attrs),
-                    continue(Rest, push_token(Token, Parser));
-                {opening, Attrs, Rest, Parser} ->
-                    Token = tag_token(open, TagName, Attrs),
-                    continue(Rest, push_token(Token, Parser))
+        {void, TagName, Rest, Scan} ->
+            continue(Rest, fold(Scan, [
+                fun(S) -> push_tokens([TxtToken, void_token(TagName, [], S)], S) end,
+                fun(S) -> update_pos(S) end,
+                fun(S) -> snapshot(S) end
+            ]));
+        {without_attrs, TagName, Rest, Scan} ->
+            continue(Rest, fold(Scan, [
+                fun(S) -> push_tokens([TxtToken, open_token(TagName, [], S)], S) end,
+                fun(S) -> update_pos(S) end,
+                fun(S) -> snapshot(S) end
+            ]));
+        {with_attrs, TagName, Rest1, Scan1} ->
+            case parse_attrs(Rest1, Scan1) of
+                {void, Attrs, Rest, Scan} ->
+                    continue(Rest, fold(Scan, [
+                        fun(S) -> push_token(void_token(TagName, Attrs, S), S) end,
+                        fun(S) -> update_pos(S) end,
+                        fun(S) -> snapshot(S) end
+                    ]));
+                {opening, Attrs, Rest, Scan} ->
+                    continue(Rest, fold(Scan, [
+                        fun(S) -> push_token(open_token(TagName, Attrs, S), S) end,
+                        fun(S) -> update_pos(S) end,
+                        fun(S) -> snapshot(S) end
+                    ]))
             end
     end.
 
-parse_closing_tag(Text, Rest0, Parser0) ->
-    {_, TagName, Rest, Parser} = parse_tag_name(Rest0, Parser0),
-    case hd(get_tokens(Parser0)) of
-        {void, _} ->
-            TxtToken = text_token(Text),
-            Token = tag_token(close, TagName),
-            continue(Rest, update_pos(push_tokens([TxtToken, Token], Parser)));
-        {open, _} ->
-            TxtToken = text_token(Text),
-            Token = tag_token(close, TagName),
-            continue(Rest, update_pos(push_tokens([TxtToken, Token], Parser)));
-        {close, CloseTagName} ->
+parse_closing_tag(TxtToken, Rest0, Scan0) ->
+    {_, TagName, Rest, Scan} = parse_tag_name(Rest0, Scan0),
+    case hd(get_tokens(Scan0)) of
+        {Tag, _, _} when Tag =:= void; Tag =:= open; Tag =:= comment ->
+            continue(Rest, fold(Scan, [
+                fun(S) -> push_tokens([TxtToken, close_token(TagName, S)], S) end
+            ]));
+        {close, _, CloseTagName} ->
             case is_plain_text(CloseTagName) of
                 true ->
-                    Token = tag_token(close, TagName),
-                    continue(Rest, update_pos(push_token(Token, Parser)));
+                    continue(Rest, fold(Scan, [
+                        fun(S) -> push_token(close_token(TagName, S), S) end
+                    ]));
                 false ->
-                    TxtToken = text_token(Text),
-                    Token = tag_token(close, TagName),
-                    continue(Rest, update_pos(push_tokens([Token, TxtToken], Parser)))
+                    continue(Rest, fold(Scan, [
+                        fun(S) -> push_tokens([close_token(TagName, S), TxtToken], S) end
+                    ]))
             end;
-        {text, _} ->
-            TxtToken = text_token(Text),
-            Token = tag_token(close, TagName),
-            continue(Rest, update_pos(push_tokens([Token, TxtToken], Parser)))
+        {text, _, _} ->
+            continue(Rest, fold(Scan, [
+                fun(S) -> push_tokens([close_token(TagName, S), TxtToken], S) end
+            ]))
     end.
 
 is_plain_text(<<"title">>) ->
@@ -296,14 +381,17 @@ is_plain_text(<<"style">>) ->
 is_plain_text(<<_TagName/bitstring>>) ->
     false.
 
-parse_tag_name(Text, Parser) ->
-    continue_tag_name(Text, update_pos(Parser)).
+parse_tag_name(Text, Scan) ->
+    continue_tag_name(Text, update_pos(Scan)).
 
-continue_tag_name(<<$/, $>, Rest/bitstring>>, Parser) ->
-    TagName = pos_text(Parser),
-    {void, TagName, Rest, update_pos(incr_col(2, Parser))};
-continue_tag_name(<<$>, Rest/bitstring>>, Parser) ->
-    TagName = pos_text(Parser),
+continue_tag_name(<<$/, $>, Rest/bitstring>>, Scan) ->
+    TagName = pos_text(Scan),
+    {void, TagName, Rest, fold(Scan, [
+        fun(S) -> incr_col(2, S) end,
+        fun(S) -> update_pos(S) end
+    ])};
+continue_tag_name(<<$>, Rest/bitstring>>, Scan) ->
+    TagName = pos_text(Scan),
     Kind = case is_void(TagName) of
         true -> void;
         false ->
@@ -314,9 +402,12 @@ continue_tag_name(<<$>, Rest/bitstring>>, Parser) ->
                     without_attrs
             end
     end,
-    {Kind, TagName, Rest, update_pos(incr_col(Parser))};
-continue_tag_name(<<$\s, Rest/bitstring>>, Parser) ->
-    TagName = pos_text(Parser),
+    {Kind, TagName, Rest, fold(Scan, [
+        fun(S) -> incr_col(S) end,
+        fun(S) -> update_pos(S) end
+    ])};
+continue_tag_name(<<$\s, Rest/bitstring>>, Scan) ->
+    TagName = pos_text(Scan),
     Kind =
         case is_plain_text(TagName) of
             true ->
@@ -324,15 +415,13 @@ continue_tag_name(<<$\s, Rest/bitstring>>, Parser) ->
             false ->
                 with_attrs
         end,
-    {Kind, TagName, Rest, update_pos(incr_col(Parser))};
-continue_tag_name(<<$\r, $\n, Rest/bitstring>>, Parser) ->
-    continue_tag_name(Rest, new_ln(Parser));
-continue_tag_name(<<$\r, Rest/bitstring>>, Parser) ->
-    continue_tag_name(Rest, new_ln(Parser));
-continue_tag_name(<<$\n, Rest/bitstring>>, Parser) ->
-    continue_tag_name(Rest, new_ln(Parser));
-continue_tag_name(<<_, Rest/bitstring>>, Parser) ->
-    continue_tag_name(Rest, incr_col(Parser)).
+    {Kind, TagName, Rest, fold(Scan, [
+        fun(S) -> incr_col(S) end,
+        fun(S) -> update_pos(S) end
+    ])};
+continue_tag_name(<<Rest0/bitstring>>, Scan0) ->
+    {ok, {_Char, Rest, Scan}} = skip_new_lns(Rest0, Scan0),
+    continue_tag_name(Rest, incr_col(Scan)).
 
 is_void(<<"area">>) ->
     true;
@@ -365,29 +454,30 @@ is_void(<<"wbr">>) ->
 is_void(<<_TagName/bitstring>>) ->
     false.
 
-parse_attrs(Text, Parser) ->
-    continue_attrs(Text, Parser).
+parse_attrs(Text, Scan) ->
+    continue_attrs(Text, Scan).
 
-continue_attrs(<<$/, $>, Rest/binary>>, Parser) ->
-    Handler = get_handler(Parser),
-    Attrs = Handler:handle_attrs(pos_text(Parser)),
-    {void, Attrs, Rest, update_pos(incr_col(2, Parser))};
-continue_attrs(<<$>, Rest/binary>>, Parser) ->
-    Handler = get_handler(Parser),
-    Attrs = Handler:handle_attrs(pos_text(Parser)),
+continue_attrs(<<$/, $>, Rest/bitstring>>, Scan) ->
+    Handler = get_handler(Scan),
+    Attrs = Handler:handle_attrs(pos_text(Scan), get_snap_loc(Scan)),
+    {void, Attrs, Rest, fold(Scan, [
+        fun(S) -> incr_col(2, S) end,
+        fun(S) -> update_pos(S) end
+    ])};
+continue_attrs(<<$>, Rest/bitstring>>, Scan) ->
+    Handler = get_handler(Scan),
+    Attrs = Handler:handle_attrs(pos_text(Scan), get_snap_loc(Scan)),
     Kind = case Attrs =:= [] of
         true -> void;
         false -> opening
     end,
-    {Kind, Attrs, Rest, update_pos(incr_col(Parser))};
-continue_attrs(<<$\r, $\n, Rest/bitstring>>, Parser) ->
-    continue_attrs(Rest, new_ln(Parser));
-continue_attrs(<<$\r, Rest/bitstring>>, Parser) ->
-    continue_attrs(Rest, new_ln(Parser));
-continue_attrs(<<$\n, Rest/bitstring>>, Parser) ->
-    continue_attrs(Rest, new_ln(Parser));
-continue_attrs(<<_, Rest/binary>>, Parser) ->
-    continue_attrs(Rest, incr_col(Parser)).
+    {Kind, Attrs, Rest, fold(Scan, [
+        fun(S) -> incr_col(S) end,
+        fun(S) -> update_pos(S) end
+    ])};
+continue_attrs(<<Rest0/bitstring>>, Scan0) ->
+    {ok, {_Char, Rest, Scan}} = skip_new_lns(Rest0, Scan0),
+    continue_attrs(Rest, incr_col(Scan)).
 
 %%%=====================================================================
 %%% Test
@@ -397,40 +487,47 @@ continue_attrs(<<_, Rest/binary>>, Parser) ->
 
 parse_test() ->
     Expect = [
-        {open,{<<"!DOCTYPE">>,[<<"html">>]}},
-        {open,{<<"html">>,[{<<"lang">>,<<"\"en\"">>}]}},
-        {comment,<<" Comment ">>},
-        {open,{<<"head">>,[]}},
-        {open,{<<"title">>,[]}},
-        {text,<<"<b>content inside <title> must be treated as plaintext</b>">>},
-        {close,<<"title">>},
-        {open,{<<"script">>,[{<<"src">>,<<"\"assets/foo.js\"">>}]}},
-        {close,<<"script">>},
-        {open,{<<"style">>,[]}},
-        {text,<<"\n            :root {\n                --foo: 0;\n            }\n        ">>},
-        {close,<<"style">>},
-        {close,<<"head">>},
-        {open,{<<"body">>,[]}},
-        {open,{<<"h1">>,[]}},
-        {text,<<"Form">>},
-        {close,<<"h1">>},
-        {void,{<<"br">>,[]}},
-        {void,{<<"br">>,[]}},
-        {open,{<<"form">>,[]}},
-        {open,{<<"div">>,[]}},
-        {text,<<"Foo Form">>},
-        {close,<<"div">>},
-        {void,{<<"input">>,
-            [{<<"id">>,<<"\"foo\"">>},
-                {<<"name">>,<<"'foo'">>},
-                {<<"value">>,<<"'\"bar\"'">>},
-                <<>>]}},
-        {void,{<<"input">>,
-            [{<<"type">>,<<"\"number\"">>},
-                {<<"value">>,<<"10">>}]}},
-        {close,<<"form">>},
-        {close,<<"body">>},
-        {close,<<"html">>}
+        {open,{{2,5},undefined,undefined},
+            {<<"!DOCTYPE">>,[{<<"html">>,{true,{2,5}}}]}},
+        {open,{{3,5},undefined,undefined},
+            {<<"html">>,[{<<"lang">>,{<<"\"en\"">>,{3,5}}}]}},
+        {comment,{{4,5},undefined,undefined},<<" Comment ">>},
+        {open,{{5,5},undefined,undefined},{<<"head">>,[]}},
+        {open,{{6,9},undefined,undefined},{<<"title">>,[]}},
+        {text,{{6,16},undefined,undefined},
+            <<"<b>content inside <title> must be treated as plaintext</b>">>},
+        {close,{{6,74},undefined,undefined},<<"title">>},
+        {open,{{7,9},undefined,undefined},
+            {<<"script">>,
+            [{<<"src">>,{<<"\"assets/foo.js\"">>,{7,9}}}]}},
+        {close,{{7,37},undefined,undefined},<<"script">>},
+        {open,{{8,9},undefined,undefined},{<<"style">>,[]}},
+        {text,{{8,16},undefined,undefined},
+            <<":root {\n                --foo: 0;\n            }">>},
+        {close,{{12,9},undefined,undefined},<<"style">>},
+        {close,{{13,5},undefined,undefined},<<"head">>},
+        {open,{{14,5},undefined,undefined},{<<"body">>,[]}},
+        {open,{{15,9},undefined,undefined},{<<"h1">>,[]}},
+        {text,{{15,13},undefined,undefined},<<"Form">>},
+        {close,{{15,17},undefined,undefined},<<"h1">>},
+        {void,{{16,9},undefined,undefined},{<<"br">>,[]}},
+        {void,{{17,9},undefined,undefined},{<<"br">>,[]}},
+        {open,{{18,9},undefined,undefined},{<<"form">>,[]}},
+        {open,{{19,13},undefined,undefined},{<<"div">>,[]}},
+        {text,{{19,18},undefined,undefined},<<"Foo Form">>},
+        {close,{{19,26},undefined,undefined},<<"div">>},
+        {void,{{20,13},undefined,undefined},
+            {<<"input">>,
+            [{<<"id">>,{<<"\"foo\"">>,{20,13}}},
+            {<<"name">>,{<<"'foo'">>,{20,22}}},
+            {<<"value">>,{<<"'\"bar\"'">>,{20,33}}}]}},
+        {void,{{21,13},undefined,undefined},
+            {<<"input">>,
+            [{<<"type">>,{<<"\"number\"">>,{21,13}}},
+            {<<"value">>,{<<"10">>,{21,27}}}]}},
+        {close,{{22,9},undefined,undefined},<<"form">>},
+        {close,{{23,5},undefined,undefined},<<"body">>},
+        {close,{{24,5},undefined,undefined},<<"html">>}
     ],
     String = <<"
     <!DOCTYPE html>
@@ -462,15 +559,18 @@ parse_test() ->
 
 handle_attrs_test() ->
     Expect = [
-        {<<"id">>, <<"\"foo\"">>},
-        {<<"name">>, <<"'foo'">>},
-        {<<"value">>, <<"'\"bar\"'">>},
-        {<<"maxlength">>, <<"10">>},
-        <<"required">>,
-        <<"disabled">>
+        {<<"id">>,{<<"\"foo\"">>,{2,5}}},
+        {<<"name">>,{<<"'foo'">>,{2,14}}},
+        {<<"value">>,{<<"'\"bar\"'">>,{2,25}}},
+        {<<"maxlength">>,{<<"10">>,{2,39}}},
+        {<<"required">>,{true,{3,5}}},
+        {<<"disabled">>,{true,{3,14}}}
     ],
-    Text = <<"id=\"foo\" name='foo' value='\"b\ar\"' maxlength=10 required disabled">>,
-    Expr = handle_attrs(Text),
+    Text = <<"
+    id=\"foo\" name='foo' value='\"b\ar\"' maxlength=10
+    required disabled disabled
+    ">>,
+    Expr = handle_attrs(Text, {1, 1}),
     ?assertEqual(Expect, Expr).
 
 -endif.
