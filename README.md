@@ -104,7 +104,7 @@ HTML utilities for Erlang.
 ```
 
 > [!NOTE]
-> The structure of the parsed tokens is `{TagName, Attributes, ChildrenNodes}`.
+> The structure of the parsed tokens is `{Tag, Attributes, Nodes}`.
 
 ## Build
 

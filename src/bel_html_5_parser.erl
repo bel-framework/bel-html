@@ -47,16 +47,16 @@ parse(Tokens, Opts) when is_list(Tokens), is_map(Opts) ->
 %%% Internal functions
 %%%=====================================================================
 
-do_parse([{void, _Anno, {TagName, Attrs}} | T], State, [{N, A, C} | Acc]) ->
-    do_parse(T, State, [{N, A, C ++ [{TagName, normalize_attrs(Attrs), []}]} | Acc]);
-do_parse([{void, _Anno, {TagName, Attrs}} | T], State, Acc) ->
-    do_parse(T, State, [{TagName, normalize_attrs(Attrs), []} | Acc]);
-do_parse([{open, _Anno, {TagName, Attrs}} | T], State, Acc) ->
-    do_parse(T, State, [{TagName, normalize_attrs(Attrs), []} | Acc]);
-do_parse([{close, _Anno, TagName} | T], State, [{TagName, _, _} = Token, {N, A, C} | Acc]) ->
+do_parse([{void, _Anno, {Tag, Attrs}} | T], State, [{N, A, C} | Acc]) ->
+    do_parse(T, State, [{N, A, C ++ [{Tag, normalize_attrs(Attrs), []}]} | Acc]);
+do_parse([{void, _Anno, {Tag, Attrs}} | T], State, Acc) ->
+    do_parse(T, State, [{Tag, normalize_attrs(Attrs), []} | Acc]);
+do_parse([{open, _Anno, {Tag, Attrs}} | T], State, Acc) ->
+    do_parse(T, State, [{Tag, normalize_attrs(Attrs), []} | Acc]);
+do_parse([{close, _Anno, Tag} | T], State, [{Tag, _, _} = Token, {N, A, C} | Acc]) ->
     do_parse(T, State, [{N, A, C ++ [Token]} | Acc]);
-do_parse([{close, _Anno, TagName} | T], State, [{TagName, Attrs, ChildrenNodes} | Acc]) ->
-    do_parse(T, State, [terminate, {TagName, Attrs, ChildrenNodes} | Acc]);
+do_parse([{close, _Anno, Tag} | T], State, [{Tag, Attrs, Nodes} | Acc]) ->
+    do_parse(T, State, [terminate, {Tag, Attrs, Nodes} | Acc]);
 do_parse([{text, _Anno, Text} | T], State, [{N, A, C} | Acc]) ->
     do_parse(T, State, [{N, A, C ++ [Text]} | Acc]);
 do_parse([{text, _Anno, Text} | T], State, [terminate | Acc]) ->

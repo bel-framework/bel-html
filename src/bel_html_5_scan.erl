@@ -243,14 +243,14 @@ comment_token(Scan) ->
 text_token(Scan) ->
     token(text, pos_text(Scan), Scan).
 
-close_token(TagName, Scan) ->
-    token(close, TagName, Scan).
+close_token(Tag, Scan) ->
+    token(close, Tag, Scan).
 
-void_token(TagName, Attrs, Scan) ->
-    token(void, {TagName, Attrs}, Scan).
+void_token(Tag, Attrs, Scan) ->
+    token(void, {Tag, Attrs}, Scan).
 
-open_token(TagName, Attrs, Scan) ->
-    token(open, {TagName, Attrs}, Scan).
+open_token(Tag, Attrs, Scan) ->
+    token(open, {Tag, Attrs}, Scan).
 
 token(Tag, Metadata, Scan) ->
     bel_scan:token(Tag, bel_scan:anno(Scan), Metadata).
@@ -293,60 +293,60 @@ parse_comment(<<Rest0/bitstring>>, Scan0) ->
     {ok, {_Char, Rest, Scan}} = skip_new_lns(Rest0, Scan0),
     parse_comment(Rest, incr_col(Scan)).
 
-parse_plain_text(TagName, Rest, Scan) ->
-    TagSize = byte_size(TagName),
-    continue_plain_text(Rest, TagName, TagSize, snapshot(update_pos(Scan))).
+parse_plain_text(Tag, Rest, Scan) ->
+    TagSize = byte_size(Tag),
+    continue_plain_text(Rest, Tag, TagSize, snapshot(update_pos(Scan))).
 
-continue_plain_text(Rest0, TagName, TagSize, Scan0) ->
+continue_plain_text(Rest0, Tag, TagSize, Scan0) ->
     case Rest0 of
-        <<"</", TagName:TagSize/binary, $>, Rest/bitstring>> ->
+        <<"</", Tag:TagSize/binary, $>, Rest/bitstring>> ->
             continue(Rest, fold(Scan0, [
                 fun(S) -> update_pos(S) end,
                 fun(S) -> snapshot(S) end,
-                fun(S) -> push_tokens([text_token(Scan0), close_token(TagName, S)], S) end,
+                fun(S) -> push_tokens([text_token(Scan0), close_token(Tag, S)], S) end,
                 fun(S) -> incr_col(2 + TagSize + 1, S) end,
                 fun(S) -> update_pos(S) end,
                 fun(S) -> snapshot(S) end
             ]));
         <<Rest0/bitstring>> ->
             {ok, {_Char, Rest, Scan}} = skip_new_lns(Rest0, Scan0),
-            continue_plain_text(Rest, TagName, TagSize, incr_col(Scan))
+            continue_plain_text(Rest, Tag, TagSize, incr_col(Scan))
     end.
 
 parse_tag(TxtToken, Rest0, Scan0) ->
     case parse_tag_name(Rest0, Scan0) of
-        {plain_text_without_attrs, TagName, Rest, Scan} ->
-            Token = open_token(TagName, [], Scan),
-            parse_plain_text(TagName, Rest, push_token(Token, Scan));
-        {plain_text_with_attrs, TagName, Rest1, Scan1} ->
+        {plain_text_without_attrs, Tag, Rest, Scan} ->
+            Token = open_token(Tag, [], Scan),
+            parse_plain_text(Tag, Rest, push_token(Token, Scan));
+        {plain_text_with_attrs, Tag, Rest1, Scan1} ->
             case parse_attrs(Rest1, Scan1) of
                 {opening, Attrs, Rest, Scan} ->
-                    Token = open_token(TagName, Attrs, Scan),
-                    parse_plain_text(TagName, Rest, push_token(Token, Scan))
+                    Token = open_token(Tag, Attrs, Scan),
+                    parse_plain_text(Tag, Rest, push_token(Token, Scan))
             end;
-        {void, TagName, Rest, Scan} ->
+        {void, Tag, Rest, Scan} ->
             continue(Rest, fold(Scan, [
-                fun(S) -> push_tokens([TxtToken, void_token(TagName, [], S)], S) end,
+                fun(S) -> push_tokens([TxtToken, void_token(Tag, [], S)], S) end,
                 fun(S) -> update_pos(S) end,
                 fun(S) -> snapshot(S) end
             ]));
-        {without_attrs, TagName, Rest, Scan} ->
+        {without_attrs, Tag, Rest, Scan} ->
             continue(Rest, fold(Scan, [
-                fun(S) -> push_tokens([TxtToken, open_token(TagName, [], S)], S) end,
+                fun(S) -> push_tokens([TxtToken, open_token(Tag, [], S)], S) end,
                 fun(S) -> update_pos(S) end,
                 fun(S) -> snapshot(S) end
             ]));
-        {with_attrs, TagName, Rest1, Scan1} ->
+        {with_attrs, Tag, Rest1, Scan1} ->
             case parse_attrs(Rest1, Scan1) of
                 {void, Attrs, Rest, Scan} ->
                     continue(Rest, fold(Scan, [
-                        fun(S) -> push_token(void_token(TagName, Attrs, S), S) end,
+                        fun(S) -> push_token(void_token(Tag, Attrs, S), S) end,
                         fun(S) -> update_pos(S) end,
                         fun(S) -> snapshot(S) end
                     ]));
                 {opening, Attrs, Rest, Scan} ->
                     continue(Rest, fold(Scan, [
-                        fun(S) -> push_token(open_token(TagName, Attrs, S), S) end,
+                        fun(S) -> push_token(open_token(Tag, Attrs, S), S) end,
                         fun(S) -> update_pos(S) end,
                         fun(S) -> snapshot(S) end
                     ]))
@@ -354,26 +354,26 @@ parse_tag(TxtToken, Rest0, Scan0) ->
     end.
 
 parse_closing_tag(TxtToken, Rest0, Scan0) ->
-    {_, TagName, Rest, Scan} = parse_tag_name(Rest0, Scan0),
+    {_, Tag, Rest, Scan} = parse_tag_name(Rest0, Scan0),
     case hd(get_tokens(Scan0)) of
-        {Tag, _, _} when Tag =:= void; Tag =:= open; Tag =:= comment ->
+        {PrevTag, _, _} when PrevTag =:= void; PrevTag =:= open; PrevTag =:= comment ->
             continue(Rest, fold(Scan, [
-                fun(S) -> push_tokens([TxtToken, close_token(TagName, S)], S) end
+                fun(S) -> push_tokens([TxtToken, close_token(Tag, S)], S) end
             ]));
-        {close, _, CloseTagName} ->
-            case is_plain_text(CloseTagName) of
+        {close, _, CloseTag} ->
+            case is_plain_text(CloseTag) of
                 true ->
                     continue(Rest, fold(Scan, [
-                        fun(S) -> push_token(close_token(TagName, S), S) end
+                        fun(S) -> push_token(close_token(Tag, S), S) end
                     ]));
                 false ->
                     continue(Rest, fold(Scan, [
-                        fun(S) -> push_tokens([close_token(TagName, S), TxtToken], S) end
+                        fun(S) -> push_tokens([close_token(Tag, S), TxtToken], S) end
                     ]))
             end;
         {text, _, _} ->
             continue(Rest, fold(Scan, [
-                fun(S) -> push_tokens([close_token(TagName, S), TxtToken], S) end
+                fun(S) -> push_tokens([close_token(Tag, S), TxtToken], S) end
             ]))
     end.
 
@@ -383,44 +383,44 @@ is_plain_text(<<"script">>) ->
     true;
 is_plain_text(<<"style">>) ->
     true;
-is_plain_text(<<_TagName/bitstring>>) ->
+is_plain_text(<<_Tag/bitstring>>) ->
     false.
 
 parse_tag_name(Text, Scan) ->
     continue_tag_name(Text, update_pos(Scan)).
 
 continue_tag_name(<<$/, $>, Rest/bitstring>>, Scan) ->
-    TagName = pos_text(Scan),
-    {void, TagName, Rest, fold(Scan, [
+    Tag = pos_text(Scan),
+    {void, Tag, Rest, fold(Scan, [
         fun(S) -> incr_col(2, S) end,
         fun(S) -> update_pos(S) end
     ])};
 continue_tag_name(<<$>, Rest/bitstring>>, Scan) ->
-    TagName = pos_text(Scan),
-    Kind = case is_void(TagName) of
+    Tag = pos_text(Scan),
+    Kind = case is_void(Tag) of
         true -> void;
         false ->
-            case is_plain_text(TagName) of
+            case is_plain_text(Tag) of
                 true ->
                     plain_text_without_attrs;
                 false ->
                     without_attrs
             end
     end,
-    {Kind, TagName, Rest, fold(Scan, [
+    {Kind, Tag, Rest, fold(Scan, [
         fun(S) -> incr_col(S) end,
         fun(S) -> update_pos(S) end
     ])};
 continue_tag_name(<<$\s, Rest/bitstring>>, Scan) ->
-    TagName = pos_text(Scan),
+    Tag = pos_text(Scan),
     Kind =
-        case is_plain_text(TagName) of
+        case is_plain_text(Tag) of
             true ->
                 plain_text_with_attrs;
             false ->
                 with_attrs
         end,
-    {Kind, TagName, Rest, fold(Scan, [
+    {Kind, Tag, Rest, fold(Scan, [
         fun(S) -> incr_col(S) end,
         fun(S) -> update_pos(S) end
     ])};
@@ -456,7 +456,7 @@ is_void(<<"track">>) ->
     true;
 is_void(<<"wbr">>) ->
     true;
-is_void(<<_TagName/bitstring>>) ->
+is_void(<<_Tag/bitstring>>) ->
     false.
 
 parse_attrs(Text, Scan) ->
