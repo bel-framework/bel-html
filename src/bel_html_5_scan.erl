@@ -129,12 +129,17 @@ do_handle_attrs(Text, Loc0, Acc) ->
         {with_value, KPos, KLen, Rest0, KLoc} ->
             Key = binary_part(Text, KPos, KLen),
             {VPos, VLen, VRest, VLoc} = get_attr_value(Rest0, KLoc),
-            Value = binary_part(Rest0, VPos, VLen),
+            Value = normalize_attr_value(Key, binary_part(Rest0, VPos, VLen)),
             {Rest, Loc} = skip_spaces(VRest, VLoc),
             do_handle_attrs(Rest, Loc, push_attribute(Key, Value, Loc0, Acc));
         none ->
             lists:reverse(Acc)
     end.
+
+normalize_attr_value(<<"class">>, Value) ->
+    binary:split(Value, <<" ">>, [global, trim_all]);
+normalize_attr_value(<<_/bitstring>>, Value) ->
+    Value.
 
 skip_spaces(<<$\r, $\n, Rest/bitstring>>, {Ln, _Col}) ->
     skip_spaces(Rest, {Ln+1, 1});
@@ -200,16 +205,16 @@ do_get_attr_key_1(<<>>, Pos, Len, Loc) ->
     {without_value, Pos, Len, <<>>, Loc}.
 
 get_attr_value(<<$", Rest/bitstring>>, {Ln, Col}) ->
-    get_str_value(Rest, 0, 1, $", {Ln, Col+1});
+    get_str_value(Rest, 1, 0, $", {Ln, Col+1});
 get_attr_value(<<$', Rest/bitstring>>, {Ln, Col}) ->
-    get_str_value(Rest, 0, 1, $', {Ln, Col+1});
+    get_str_value(Rest, 1, 0, $', {Ln, Col+1});
 get_attr_value(<<Rest/bitstring>>, Loc)->
     get_number_value(Rest, 0, 0, Loc).
 
 get_str_value(<<$\\, Q, Rest/bitstring>>, Pos, Len, Q, {Ln, Col}) ->
     get_str_value(Rest, Pos, Len+2, Q, {Ln, Col+2});
 get_str_value(<<Q, Rest/bitstring>>, Pos, Len, Q, {Ln, Col}) ->
-    {Pos, Len+1, Rest, {Ln, Col+1}};
+    {Pos, Len, Rest, {Ln, Col+1}};
 get_str_value(<<_, Rest/bitstring>>, Pos, Len, Q, {Ln, Col}) ->
     get_str_value(Rest, Pos, Len+1, Q, {Ln, Col+1}).
 
@@ -238,14 +243,14 @@ comment_token(Scan) ->
 text_token(Scan) ->
     token(text, pos_text(Scan), Scan).
 
-close_token(TagName, Scan) ->
-    token(close, TagName, Scan).
+close_token(Tag, Scan) ->
+    token(close, Tag, Scan).
 
-void_token(TagName, Attrs, Scan) ->
-    token(void, {TagName, Attrs}, Scan).
+void_token(Tag, Attrs, Scan) ->
+    token(void, {Tag, Attrs}, Scan).
 
-open_token(TagName, Attrs, Scan) ->
-    token(open, {TagName, Attrs}, Scan).
+open_token(Tag, Attrs, Scan) ->
+    token(open, {Tag, Attrs}, Scan).
 
 token(Tag, Metadata, Scan) ->
     bel_scan:token(Tag, bel_scan:anno(Scan), Metadata).
@@ -288,60 +293,60 @@ parse_comment(<<Rest0/bitstring>>, Scan0) ->
     {ok, {_Char, Rest, Scan}} = skip_new_lns(Rest0, Scan0),
     parse_comment(Rest, incr_col(Scan)).
 
-parse_plain_text(TagName, Rest, Scan) ->
-    TagSize = byte_size(TagName),
-    continue_plain_text(Rest, TagName, TagSize, snapshot(update_pos(Scan))).
+parse_plain_text(Tag, Rest, Scan) ->
+    TagSize = byte_size(Tag),
+    continue_plain_text(Rest, Tag, TagSize, snapshot(update_pos(Scan))).
 
-continue_plain_text(Rest0, TagName, TagSize, Scan0) ->
+continue_plain_text(Rest0, Tag, TagSize, Scan0) ->
     case Rest0 of
-        <<"</", TagName:TagSize/binary, $>, Rest/bitstring>> ->
+        <<"</", Tag:TagSize/binary, $>, Rest/bitstring>> ->
             continue(Rest, fold(Scan0, [
                 fun(S) -> update_pos(S) end,
                 fun(S) -> snapshot(S) end,
-                fun(S) -> push_tokens([text_token(Scan0), close_token(TagName, S)], S) end,
+                fun(S) -> push_tokens([text_token(Scan0), close_token(Tag, S)], S) end,
                 fun(S) -> incr_col(2 + TagSize + 1, S) end,
                 fun(S) -> update_pos(S) end,
                 fun(S) -> snapshot(S) end
             ]));
         <<Rest0/bitstring>> ->
             {ok, {_Char, Rest, Scan}} = skip_new_lns(Rest0, Scan0),
-            continue_plain_text(Rest, TagName, TagSize, incr_col(Scan))
+            continue_plain_text(Rest, Tag, TagSize, incr_col(Scan))
     end.
 
 parse_tag(TxtToken, Rest0, Scan0) ->
     case parse_tag_name(Rest0, Scan0) of
-        {plain_text_without_attrs, TagName, Rest, Scan} ->
-            Token = open_token(TagName, [], Scan),
-            parse_plain_text(TagName, Rest, push_token(Token, Scan));
-        {plain_text_with_attrs, TagName, Rest1, Scan1} ->
+        {plain_text_without_attrs, Tag, Rest, Scan} ->
+            Token = open_token(Tag, [], Scan),
+            parse_plain_text(Tag, Rest, push_token(Token, Scan));
+        {plain_text_with_attrs, Tag, Rest1, Scan1} ->
             case parse_attrs(Rest1, Scan1) of
                 {opening, Attrs, Rest, Scan} ->
-                    Token = open_token(TagName, Attrs, Scan),
-                    parse_plain_text(TagName, Rest, push_token(Token, Scan))
+                    Token = open_token(Tag, Attrs, Scan),
+                    parse_plain_text(Tag, Rest, push_token(Token, Scan))
             end;
-        {void, TagName, Rest, Scan} ->
+        {void, Tag, Rest, Scan} ->
             continue(Rest, fold(Scan, [
-                fun(S) -> push_tokens([TxtToken, void_token(TagName, [], S)], S) end,
+                fun(S) -> push_tokens([TxtToken, void_token(Tag, [], S)], S) end,
                 fun(S) -> update_pos(S) end,
                 fun(S) -> snapshot(S) end
             ]));
-        {without_attrs, TagName, Rest, Scan} ->
+        {without_attrs, Tag, Rest, Scan} ->
             continue(Rest, fold(Scan, [
-                fun(S) -> push_tokens([TxtToken, open_token(TagName, [], S)], S) end,
+                fun(S) -> push_tokens([TxtToken, open_token(Tag, [], S)], S) end,
                 fun(S) -> update_pos(S) end,
                 fun(S) -> snapshot(S) end
             ]));
-        {with_attrs, TagName, Rest1, Scan1} ->
+        {with_attrs, Tag, Rest1, Scan1} ->
             case parse_attrs(Rest1, Scan1) of
                 {void, Attrs, Rest, Scan} ->
                     continue(Rest, fold(Scan, [
-                        fun(S) -> push_token(void_token(TagName, Attrs, S), S) end,
+                        fun(S) -> push_token(void_token(Tag, Attrs, S), S) end,
                         fun(S) -> update_pos(S) end,
                         fun(S) -> snapshot(S) end
                     ]));
                 {opening, Attrs, Rest, Scan} ->
                     continue(Rest, fold(Scan, [
-                        fun(S) -> push_token(open_token(TagName, Attrs, S), S) end,
+                        fun(S) -> push_token(open_token(Tag, Attrs, S), S) end,
                         fun(S) -> update_pos(S) end,
                         fun(S) -> snapshot(S) end
                     ]))
@@ -349,26 +354,26 @@ parse_tag(TxtToken, Rest0, Scan0) ->
     end.
 
 parse_closing_tag(TxtToken, Rest0, Scan0) ->
-    {_, TagName, Rest, Scan} = parse_tag_name(Rest0, Scan0),
+    {_, Tag, Rest, Scan} = parse_tag_name(Rest0, Scan0),
     case hd(get_tokens(Scan0)) of
-        {Tag, _, _} when Tag =:= void; Tag =:= open; Tag =:= comment ->
+        {PrevTag, _, _} when PrevTag =:= void; PrevTag =:= open; PrevTag =:= comment ->
             continue(Rest, fold(Scan, [
-                fun(S) -> push_tokens([TxtToken, close_token(TagName, S)], S) end
+                fun(S) -> push_tokens([TxtToken, close_token(Tag, S)], S) end
             ]));
-        {close, _, CloseTagName} ->
-            case is_plain_text(CloseTagName) of
+        {close, _, CloseTag} ->
+            case is_plain_text(CloseTag) of
                 true ->
                     continue(Rest, fold(Scan, [
-                        fun(S) -> push_token(close_token(TagName, S), S) end
+                        fun(S) -> push_token(close_token(Tag, S), S) end
                     ]));
                 false ->
                     continue(Rest, fold(Scan, [
-                        fun(S) -> push_tokens([close_token(TagName, S), TxtToken], S) end
+                        fun(S) -> push_tokens([close_token(Tag, S), TxtToken], S) end
                     ]))
             end;
         {text, _, _} ->
             continue(Rest, fold(Scan, [
-                fun(S) -> push_tokens([close_token(TagName, S), TxtToken], S) end
+                fun(S) -> push_tokens([close_token(Tag, S), TxtToken], S) end
             ]))
     end.
 
@@ -378,44 +383,44 @@ is_plain_text(<<"script">>) ->
     true;
 is_plain_text(<<"style">>) ->
     true;
-is_plain_text(<<_TagName/bitstring>>) ->
+is_plain_text(<<_Tag/bitstring>>) ->
     false.
 
 parse_tag_name(Text, Scan) ->
     continue_tag_name(Text, update_pos(Scan)).
 
 continue_tag_name(<<$/, $>, Rest/bitstring>>, Scan) ->
-    TagName = pos_text(Scan),
-    {void, TagName, Rest, fold(Scan, [
+    Tag = pos_text(Scan),
+    {void, Tag, Rest, fold(Scan, [
         fun(S) -> incr_col(2, S) end,
         fun(S) -> update_pos(S) end
     ])};
 continue_tag_name(<<$>, Rest/bitstring>>, Scan) ->
-    TagName = pos_text(Scan),
-    Kind = case is_void(TagName) of
+    Tag = pos_text(Scan),
+    Kind = case is_void(Tag) of
         true -> void;
         false ->
-            case is_plain_text(TagName) of
+            case is_plain_text(Tag) of
                 true ->
                     plain_text_without_attrs;
                 false ->
                     without_attrs
             end
     end,
-    {Kind, TagName, Rest, fold(Scan, [
+    {Kind, Tag, Rest, fold(Scan, [
         fun(S) -> incr_col(S) end,
         fun(S) -> update_pos(S) end
     ])};
 continue_tag_name(<<$\s, Rest/bitstring>>, Scan) ->
-    TagName = pos_text(Scan),
+    Tag = pos_text(Scan),
     Kind =
-        case is_plain_text(TagName) of
+        case is_plain_text(Tag) of
             true ->
                 plain_text_with_attrs;
             false ->
                 with_attrs
         end,
-    {Kind, TagName, Rest, fold(Scan, [
+    {Kind, Tag, Rest, fold(Scan, [
         fun(S) -> incr_col(S) end,
         fun(S) -> update_pos(S) end
     ])};
@@ -451,7 +456,7 @@ is_void(<<"track">>) ->
     true;
 is_void(<<"wbr">>) ->
     true;
-is_void(<<_TagName/bitstring>>) ->
+is_void(<<_Tag/bitstring>>) ->
     false.
 
 parse_attrs(Text, Scan) ->
@@ -485,12 +490,12 @@ continue_attrs(<<Rest0/bitstring>>, Scan0) ->
 
 -ifdef(TEST).
 
-parse_test() ->
+scan_test() ->
     Expect = [
         {open,{{2,5},undefined,undefined},
             {<<"!DOCTYPE">>,[{<<"html">>,{true,{2,5}}}]}},
         {open,{{3,5},undefined,undefined},
-            {<<"html">>,[{<<"lang">>,{<<"\"en\"">>,{3,5}}}]}},
+            {<<"html">>,[{<<"lang">>,{<<"en">>,{3,5}}}]}},
         {comment,{{4,5},undefined,undefined},<<" Comment ">>},
         {open,{{5,5},undefined,undefined},{<<"head">>,[]}},
         {open,{{6,9},undefined,undefined},{<<"title">>,[]}},
@@ -499,7 +504,7 @@ parse_test() ->
         {close,{{6,74},undefined,undefined},<<"title">>},
         {open,{{7,9},undefined,undefined},
             {<<"script">>,
-            [{<<"src">>,{<<"\"assets/foo.js\"">>,{7,9}}}]}},
+            [{<<"src">>,{<<"assets/foo.js">>,{7,9}}}]}},
         {close,{{7,37},undefined,undefined},<<"script">>},
         {open,{{8,9},undefined,undefined},{<<"style">>,[]}},
         {text,{{8,16},undefined,undefined},
@@ -518,12 +523,12 @@ parse_test() ->
         {close,{{19,26},undefined,undefined},<<"div">>},
         {void,{{20,13},undefined,undefined},
             {<<"input">>,
-            [{<<"id">>,{<<"\"foo\"">>,{20,13}}},
-            {<<"name">>,{<<"'foo'">>,{20,22}}},
-            {<<"value">>,{<<"'\"bar\"'">>,{20,33}}}]}},
+            [{<<"id">>,{<<"foo">>,{20,13}}},
+            {<<"name">>,{<<"foo">>,{20,22}}},
+            {<<"value">>,{<<"\"bar\"">>,{20,33}}}]}},
         {void,{{21,13},undefined,undefined},
             {<<"input">>,
-            [{<<"type">>,{<<"\"number\"">>,{21,13}}},
+            [{<<"type">>,{<<"number">>,{21,13}}},
             {<<"value">>,{<<"10">>,{21,27}}}]}},
         {close,{{22,9},undefined,undefined},<<"form">>},
         {close,{{23,5},undefined,undefined},<<"body">>},
@@ -559,15 +564,16 @@ parse_test() ->
 
 handle_attrs_test() ->
     Expect = [
-        {<<"id">>,{<<"\"foo\"">>,{2,5}}},
-        {<<"name">>,{<<"'foo'">>,{2,14}}},
-        {<<"value">>,{<<"'\"bar\"'">>,{2,25}}},
-        {<<"maxlength">>,{<<"10">>,{2,39}}},
+        {<<"id">>,{<<"foo">>,{2,5}}},
+        {<<"class">>,{[<<"foo">>,<<"bar">>,<<"baz">>],{2,14}}},
+        {<<"name">>,{<<"foo">>,{2,40}}},
+        {<<"value">>,{<<"\"bar\"">>,{2,51}}},
+        {<<"maxlength">>,{<<"10">>,{2,65}}},
         {<<"required">>,{true,{3,5}}},
         {<<"disabled">>,{true,{3,14}}}
     ],
     Text = <<"
-    id=\"foo\" name='foo' value='\"b\ar\"' maxlength=10
+    id=\"foo\" class='  foo  bar  baz  ' name='foo' value='\"b\ar\"' maxlength=10
     required disabled disabled
     ">>,
     Expr = handle_attrs(Text, {1, 1}),

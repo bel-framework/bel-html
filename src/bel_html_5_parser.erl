@@ -47,16 +47,16 @@ parse(Tokens, Opts) when is_list(Tokens), is_map(Opts) ->
 %%% Internal functions
 %%%=====================================================================
 
-do_parse([{void, _Anno, {TagName, Attrs}} | T], State, [{N, A, C} | Acc]) ->
-    do_parse(T, State, [{N, A, C ++ [{TagName, normalize_attrs(Attrs), []}]} | Acc]);
-do_parse([{void, _Anno, {TagName, Attrs}} | T], State, Acc) ->
-    do_parse(T, State, [{TagName, normalize_attrs(Attrs), []} | Acc]);
-do_parse([{open, _Anno, {TagName, Attrs}} | T], State, Acc) ->
-    do_parse(T, State, [{TagName, normalize_attrs(Attrs), []} | Acc]);
-do_parse([{close, _Anno, TagName} | T], State, [{TagName, _, _} = Token, {N, A, C} | Acc]) ->
+do_parse([{void, _Anno, {Tag, Attrs}} | T], State, [{N, A, C} | Acc]) ->
+    do_parse(T, State, [{N, A, C ++ [{Tag, normalize_attrs(Attrs), []}]} | Acc]);
+do_parse([{void, _Anno, {Tag, Attrs}} | T], State, Acc) ->
+    do_parse(T, State, [{Tag, normalize_attrs(Attrs), []} | Acc]);
+do_parse([{open, _Anno, {Tag, Attrs}} | T], State, Acc) ->
+    do_parse(T, State, [{Tag, normalize_attrs(Attrs), []} | Acc]);
+do_parse([{close, _Anno, Tag} | T], State, [{Tag, _, _} = Token, {N, A, C} | Acc]) ->
     do_parse(T, State, [{N, A, C ++ [Token]} | Acc]);
-do_parse([{close, _Anno, TagName} | T], State, [{TagName, Attrs, ChildrenNodes} | Acc]) ->
-    do_parse(T, State, [terminate, {TagName, normalize_attrs(Attrs), ChildrenNodes} | Acc]);
+do_parse([{close, _Anno, Tag} | T], State, [{Tag, Attrs, Nodes} | Acc]) ->
+    do_parse(T, State, [terminate, {Tag, Attrs, Nodes} | Acc]);
 do_parse([{text, _Anno, Text} | T], State, [{N, A, C} | Acc]) ->
     do_parse(T, State, [{N, A, C ++ [Text]} | Acc]);
 do_parse([{text, _Anno, Text} | T], State, [terminate | Acc]) ->
@@ -88,11 +88,17 @@ normalize_attrs(Attrs) ->
 -ifdef(TEST).
 
 parse_test() ->
+    [
+        parse_test_1(),
+        parse_test_2()
+    ].
+
+parse_test_1() ->
     Tokens = [
         {open,{{2,5},undefined,undefined},
             {<<"!DOCTYPE">>,[{<<"html">>,{true,{2,5}}}]}},
         {open,{{3,5},undefined,undefined},
-            {<<"html">>,[{<<"lang">>,{<<"\"en\"">>,{3,5}}}]}},
+            {<<"html">>,[{<<"lang">>,{<<"en">>,{3,5}}}]}},
         {comment,{{4,5},undefined,undefined},<<" Comment ">>},
         {open,{{5,5},undefined,undefined},{<<"head">>,[]}},
         {open,{{6,9},undefined,undefined},{<<"title">>,[]}},
@@ -101,7 +107,7 @@ parse_test() ->
         {close,{{6,74},undefined,undefined},<<"title">>},
         {open,{{7,9},undefined,undefined},
             {<<"script">>,
-            [{<<"src">>,{<<"\"assets/foo.js\"">>,{7,9}}}]}},
+            [{<<"src">>,{<<"assets/foo.js">>,{7,9}}}]}},
         {close,{{7,37},undefined,undefined},<<"script">>},
         {open,{{8,9},undefined,undefined},{<<"style">>,[]}},
         {text,{{8,16},undefined,undefined},
@@ -120,12 +126,12 @@ parse_test() ->
         {close,{{19,26},undefined,undefined},<<"div">>},
         {void,{{20,13},undefined,undefined},
             {<<"input">>,
-            [{<<"id">>,{<<"\"foo\"">>,{20,13}}},
-            {<<"name">>,{<<"'foo'">>,{20,22}}},
-            {<<"value">>,{<<"'\"bar\"'">>,{20,33}}}]}},
+            [{<<"id">>,{<<"foo">>,{20,13}}},
+            {<<"name">>,{<<"foo">>,{20,22}}},
+            {<<"value">>,{<<"\"bar\"">>,{20,33}}}]}},
         {void,{{21,13},undefined,undefined},
             {<<"input">>,
-            [{<<"type">>,{<<"\"number\"">>,{21,13}}},
+            [{<<"type">>,{<<"number">>,{21,13}}},
             {<<"value">>,{<<"10">>,{21,27}}}]}},
         {close,{{22,9},undefined,undefined},<<"form">>},
         {close,{{23,5},undefined,undefined},<<"body">>},
@@ -133,12 +139,12 @@ parse_test() ->
     ],
     ?assertMatch([
         {<<"!DOCTYPE">>,#{<<"html">> := true},[
-            {<<"html">>,#{<<"lang">> := <<"\"en\"">>},[
+            {<<"html">>,#{<<"lang">> := <<"en">>},[
                 {<<"head">>,#{},[
                     {<<"title">>,#{},[
                         <<"<b>content inside <title> must be treated as plaintext</b>">>
                     ]},
-                    {<<"script">>,#{<<"src">> := <<"\"assets/foo.js\"">>},[]},
+                    {<<"script">>,#{<<"src">> := <<"assets/foo.js">>},[]},
                     {<<"style">>,#{},[
                         <<":root {\n                --foo: 0;\n            }">>
                     ]}
@@ -150,12 +156,12 @@ parse_test() ->
                     {<<"form">>,#{},[
                         {<<"div">>,#{},[<<"Foo Form">>]},
                         {<<"input">>,#{
-                            <<"id">> := <<"\"foo\"">>,
-                            <<"name">> := <<"'foo'">>,
-                            <<"value">> := <<"'\"bar\"'">>
+                            <<"id">> := <<"foo">>,
+                            <<"name">> := <<"foo">>,
+                            <<"value">> := <<"\"bar\"">>
                         },[]},
                         {<<"input">>,#{
-                            <<"type">> := <<"\"number\"">>,
+                            <<"type">> := <<"number">>,
                             <<"value">> := <<"10">>
                         },[]}
                     ]}
@@ -163,5 +169,14 @@ parse_test() ->
             ]}
         ]}
     ], parse(Tokens)).
+
+parse_test_2() ->
+    Html = <<"<div><span id='foo'>bar</span></div>">>,
+    Tokens = bel_html_5_scan:string(Html),
+    ?assertMatch([
+        {<<"div">>,#{},[
+            {<<"span">>,#{<<"id">> := <<"foo">>},[<<"bar">>]}
+        ]}
+    ], bel_html_5:parse(Tokens)).
 
 -endif.
